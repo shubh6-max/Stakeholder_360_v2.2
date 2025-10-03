@@ -1,0 +1,34 @@
+# ==========================
+# Stakeholder 360 Config
+# ==========================
+
+[server]
+headless = false
+port = 8502
+enableCORS = false                  # handled by reverse proxy / load balancer
+enableXsrfProtection = false         # ✅ CSRF security ON
+maxUploadSize = 200                 # allow large Excel/CSV uploads
+fileWatcherType = "poll"
+
+
+[theme]
+base = "light"
+primaryColor = "#0072FF"            # MathCo blue
+backgroundColor = "#EBE3D6"         # beige app background
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#213547"               # modern slate grey
+font = "sans serif"                 # clean look
+
+[client]
+toolbarMode = "developer"             # valid values: auto | minimal | viewer | developer
+showErrorDetails = true
+
+[runner]
+magicEnabled = false
+fastReruns = true                   # smoother UX
+enforceSerializableSessionState = true
+
+[logger]
+level = "INFO"                      # INFO in prod; switch to DEBUG locally
+
+

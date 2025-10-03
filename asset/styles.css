@@ -1,0 +1,183 @@
+/* ---------- Base layout ---------- */
+.stApp {
+  background: #EBE3D6; /* matches config.toml */
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Reduce default padding a bit */
+.block-container {
+  padding-top: 1rem !important;
+  padding-bottom: 5rem !important;
+}
+
+/* Hide Streamlit sidebar across pages (we're using topbar) */
+[data-testid="stSidebar"] { display: none; }
+
+/* ---------- Brand box (optional, for logo) ---------- */
+.brand-box {
+  max-width: 360px;
+  height: 80px;
+  margin: 24px auto 16px;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 14px 30px rgba(0,0,0,0.12);
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px 16px;
+}
+.brand-box .brand-logo { max-height: 48px; width: auto; display: block; }
+
+/* ---------- Card for auth pages ---------- */
+.login-card {
+  background: #FFFFFF;
+  max-width: 450px;
+  /* height: 100px;  <-- remove fixed height */
+  margin: 4vh auto 0;
+  padding: 2rem 2rem 1.5rem;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+  text-align: left; /* form labels look cleaner left-aligned */
+}
+
+.login-card h2 {
+  margin: 0 0 1.25rem 0;
+  color: #213547;
+  font-weight: bold;
+}
+
+/* ---------- Inputs ---------- */
+.stTextInput > div > div > input,
+.stPassword > div > div > input {
+  /* border: 1px solid #dcdfe4; */
+  border-radius: 10px;
+  padding: 10px 10px;
+  background: #fff;
+  color: #213547;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+.stTextInput > div > div > input:focus,
+.stPassword > div > div > input:focus {
+  outline: none !important;
+  border-color: #1b1b1c;
+  box-shadow: 0 0 0 3px rgba(0,114,255,0.15);
+}
+
+/* Labels spacing */
+label[data-testid="stWidgetLabel"] > div > p {
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+  color: #213547;
+}
+
+/* ---------- Buttons ---------- */
+.stButton > button,
+.stDownloadButton > button,
+.stForm .stButton > button {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 0.8rem 1rem;
+  font-weight: bold;
+  background: #0072FF;      /* primary */
+  color: #fff;
+  cursor: pointer;
+  transition: transform .08s ease, box-shadow .2s ease, background .2s ease;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover,
+.stForm .stButton > button:hover {
+  background: #005fcc;      /* hover */
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.12);
+}
+
+/* Actions row wrapper to keep buttons aligned */
+.auth-actions {
+  margin-top: .5rem;
+}
+.auth-actions .stButton > button { width: 100%; }
+
+/* Inline link style (if you use st.markdown with <a>) */
+a.muted-link { color: #0072FF; text-decoration: none; }
+a.muted-link:hover { text-decoration: underline; }
+
+/* ---------- Messages alignment inside card ---------- */
+.login-card .stAlert { text-align: center; }
+
+/* ---------- Alignment helpers ---------- */
+.center-text {
+  text-align: center;
+}
+
+.center-block {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
+.center-flex {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Topbar --- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;  /* push badge to the right */
+  padding: 8px 6px 12px 6px;
+}
+.topbar-spacer { flex: 1; }
+
+/* Name pill */
+.name-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: linear-gradient(90deg,#bfe3ff,#e6f4ff);
+  border: 1px solid #e0edf7;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.6),
+              0 1px 3px rgba(0,0,0,.05);
+  font-size: 14px;
+  font-weight: 700;
+  color: #213547;
+  letter-spacing: .2px;
+}
+
+/* Uniform spacing for all info cards */
+.s360-card {                /* uniform spacing */
+  margin-bottom: 16px;      /* overridden from Python via inline style if needed */
+  border-radius: 10px;
+}
+.s360-card .s360-card-header {
+  background: #dbeafe;
+  border: 1px solid #cfe0ff;
+  border-radius: 8px 8px 0 0;
+  padding: 10px 12px;
+  font-weight: 700;
+  color: #1f2a44;
+}
+.s360-card .s360-card-footer {
+  height: 10px;
+  border: 1px solid #e7edf6;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #fff;
+}
+
+/* Optional: a minimal card body height so tiny tables don't “collapse” */
+.s360-card .ag-theme-streamlit {
+  min-height: 200px; /* adjust if you want tighter cards */
+}
+
+/* ---------- Responsive tweak ---------- */
+@media (max-width: 480px) {
+  .brand-box { margin: 16px auto 12px; border-radius: 12px; height: 70px; }
+  .brand-box .brand-logo { max-height: 40px; }
+  .login-card { margin-top: 3vh; padding: 1.25rem 1rem 1rem; }
+}
