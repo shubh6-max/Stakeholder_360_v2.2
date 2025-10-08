@@ -1,6 +1,11 @@
 # ============================================================
 # Python & Streamlit common ignore patterns
 # ============================================================
+# env / secrets
+.env
+*.env
+secrets*.json
+config.json
 
 # --- Virtual environments ---
 venv/
