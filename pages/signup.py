@@ -7,7 +7,9 @@ from typing import List
 from utils.layout import apply_global_style
 from utils.auth import signup_user, is_authenticated
 
-st.set_page_config(page_title="Sign Up | Stakeholder 360", layout="centered")
+from utils.page_config import set_common_page_config
+set_common_page_config(page_title="Sign Up | Stakeholder 360", layout="centered")
+# st.set_page_config(page_title="Sign Up | Stakeholder 360", layout="centered")
 apply_global_style()
 
 # ---------- Validators ----------

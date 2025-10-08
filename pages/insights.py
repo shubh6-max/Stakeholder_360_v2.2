@@ -8,8 +8,12 @@ from utils.auth import is_authenticated
 from components.insights_view import render_insights
 from features.insights.pipeline import run_end_to_end
 from features.insights.config import get_settings
+from dotenv import load_dotenv  # optional in prod, handy locally
 
-st.set_page_config(page_title="Company Insights | Stakeholder 360", layout="wide")
+from utils.page_config import set_common_page_config
+set_common_page_config(page_title="Company Insights | Stakeholder 360", layout="wide")
+
+# st.set_page_config(page_title="Company Insights | Stakeholder 360", layout="wide")
 apply_global_style()
 
 # ---- Auth guard ----

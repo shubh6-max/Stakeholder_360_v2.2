@@ -8,7 +8,10 @@ from features.orgchart.builder import build_ceo_path_with_reportees_tree
 from features.orgchart.renderer import render_org_tree
 from sqlalchemy import text
 
-st.set_page_config(page_title="Full Org Chart | Stakeholder 360", layout="wide")
+from utils.page_config import set_common_page_config
+set_common_page_config(page_title="Full Org Chart | Stakeholder 360", layout="wide")
+
+# st.set_page_config(page_title="Full Org Chart | Stakeholder 360", layout="wide")
 apply_global_style()
 
 # ---------- Query params ----------
