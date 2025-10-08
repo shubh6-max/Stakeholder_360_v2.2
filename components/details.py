@@ -175,7 +175,7 @@ def render_info_only(
         return f"""
           <div style="display:flex;gap:10px;align-items:center;margin:7px 0;">
             {icon}
-            <div style="font-size:13px;color:#213547;line-height:1.35">{text_html}</div>
+            <div style="font-size:18px;color:#213547;line-height:1.35">{text_html}</div>
           </div>
         """
 
@@ -188,7 +188,7 @@ def render_info_only(
     if url.startswith("http"):
         html += _row(
             ICON_LINKEDIN,
-            f'<a href="{url}" target="_blank" style="color:#0a66c2;text-decoration:none;">Open LinkedIn</a>'
+            f'<a href="{url}" target="_blank" style="color:#0a66c2;text-decoration:none;">LinkedIn ↗</a>'
         )
     st.markdown(html, unsafe_allow_html=True)
 

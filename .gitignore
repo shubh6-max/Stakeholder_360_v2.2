@@ -1,2 +1,78 @@
-.env
+# ============================================================
+# Python & Streamlit common ignore patterns
+# ============================================================
+
+# --- Virtual environments ---
+venv/
+.env/
+.env.local
+.venv/
+ENV/
+env/
+*.env
+
+# --- Python cache / build files ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pkl
+*.log
+*.sqlite3
+*.db
+*.DS_Store
+
+# --- IDE / Editor files ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- Jupyter / notebooks ---
+.ipynb_checkpoints/
+
+# --- Streamlit cache ---
+.streamlit/
+*/__pycache__/
+*/.streamlit/
+
+# --- OS / Temp files ---
+Thumbs.db
+.DS_Store
+*.bak
+*.tmp
+
+# --- PyInstaller / Distribution ---
+build/
+dist/
+*.spec
+
+# --- Test / Coverage ---
+.coverage
+.tox/
+pytest_cache/
+nosetests.xml
+coverage.xml
+htmlcov/
+
+# --- Private keys / credentials ---
+*.pem
 *.key
+*.p12
+*.crt
+*.cer
+*.der
+*.json
+*.yml
+*.yaml
+*.ini
+*.cfg
+config.json
+secrets.json
+credentials.json
+
+# --- Project specific ---
+assets/tmp/
+uploads/
+cache/
+data/raw/
+data/tmp/

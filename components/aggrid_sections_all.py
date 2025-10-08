@@ -60,13 +60,13 @@ RIGHT_SECTIONS: List[Tuple[str, str, List[Tuple[str, str, str]]]] = [
         "🧭 Engagement & Outreach Strategy",
         "engage",
         [
-            ("Scope of work/Priorities (internal research)", "internal_research", "longtext"),
-            ("Additional Research (External)",               "external_research", "longtext"),
+            # ("Scope of work/Priorities (internal research)", "internal_research", "longtext"),
+            # ("Additional Research (External)",               "external_research", "longtext"),
             ("MathCo LinkedIn Connects",                     "scout_linkedin_connected_flag", "bool"),
             ("Introduction Path",                            "introduction_path", "text"),
             ("Pursued in past",                              "pursued_in_past",   "bool"),
             ("If Yes, background/context ?",                 "context",           "longtext"),
-            ("Comments",                                     "comments",          "longtext"),
+            # ("Comments",                                     "comments",          "longtext"),
         ],
     ),
     (
@@ -85,8 +85,8 @@ RIGHT_SECTIONS: List[Tuple[str, str, List[Tuple[str, str, str]]]] = [
         "👤 Organizational Hierarchy",
         "org",
         [
-            ("1st Degree Manager",        "reporting_manager",             "text"),
-            ("1st Degree Manager Title",  "reporting_manager_designation", "text"),
+            ("Reporting Manager",        "reporting_manager",             "text"),
+            ("Reporting Manager Title",  "reporting_manager_designation", "text"),
         ],
     ),
     
@@ -262,7 +262,7 @@ def _render_section_card(
 
     # header
     st.markdown(
-        f'<div class="s360-card-header">{title}</div>',
+        f'<div class="s360-card-header"><b>{title}</div>',
         unsafe_allow_html=True,
     )
 

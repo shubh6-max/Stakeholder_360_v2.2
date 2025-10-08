@@ -17,8 +17,11 @@ from features.orgchart.renderer import render_upward_graph
 from components.details import render_avatar_only, render_info_only
 
 from components.aggrid_sections_all import render_all_sections
+
+from components.insights_embed import render_company_insights_inline
+
 # ==============================================================================
-st.set_page_config(page_title="Stakeholder 360", layout="wide")
+st.set_page_config(page_title="Stakeholder 360", layout="wide",page_icon="https://media.licdn.com/dms/image/v2/D4D0BAQFSLuRei6pVZA/company-logo_200_200/B4DZfJuCNfGgAI-/0/1751435978200/themathcompany_logo?e=1762992000&v=beta&t=MSRoOFnBWF_-ppGgieJzqOsYaGH53_IqO__xbc_H7XY")
 apply_global_style()
 
 # ---- Auth guard ----
@@ -44,6 +47,7 @@ NEEDED_COLS: List[str] = [
     "reporting_manager_designation",
     "email_address",
     "last_update_date",
+    "subsidiary",
 ]
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -81,30 +85,57 @@ ss.setdefault("flt_working_group", "All")
 ss.setdefault("flt_business_unit", "All")
 ss.setdefault("flt_service_line", "All")
 ss.setdefault("flt_client_name", "All")
+ss.setdefault("flt_subsidiary", "All")
 
 base = df
 
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 with c1:
     sel_account = st.selectbox("Account", options_for("account", base), key="flt_account")
 flt1 = apply_filters(base, account=sel_account)
 
 with c2:
-    sel_working_group = st.selectbox("Working Group", options_for("working_group", flt1), key="flt_working_group")
-flt2 = apply_filters(flt1, working_group=sel_working_group)
+    sel_subsidiary = st.selectbox("Subsidiary/Vertical", options_for("subsidiary", flt1), key="flt_subsidiary")
+flt2 = apply_filters(flt1, subsidiary=sel_subsidiary)
 
 with c3:
-    sel_business_unit = st.selectbox("Business Unit", options_for("business_unit", flt2), key="flt_business_unit")
-flt3 = apply_filters(flt2, business_unit=sel_business_unit)
+    sel_working_group = st.selectbox("Working Group", options_for("working_group", flt1), key="flt_working_group")
+flt3 = apply_filters(flt1, working_group=sel_working_group)
 
 with c4:
-    sel_service_line = st.selectbox("Service Line", options_for("service_line", flt3), key="flt_service_line")
-flt4 = apply_filters(flt3, service_line=sel_service_line)
+    sel_business_unit = st.selectbox("Business Unit", options_for("business_unit", flt2), key="flt_business_unit")
+flt4 = apply_filters(flt2, business_unit=sel_business_unit)
 
 with c5:
+    sel_service_line = st.selectbox("Service Line", options_for("service_line", flt3), key="flt_service_line")
+flt5 = apply_filters(flt3, service_line=sel_service_line)
+
+with c6:
     sel_client = st.selectbox("Client Name", options_for("client_name", flt4), key="flt_client_name")
-flt5 = apply_filters(flt4, client_name=sel_client)
+flt6 = apply_filters(flt4, client_name=sel_client)
+
+# --- Ready gate: don't render charts/details until a client is selected ---
+is_ready = all(
+    v != "All"
+    for v in [sel_account, sel_client]
+)
+
+if not is_ready:
+    st.markdown(
+        """
+        <div style="display:flex;justify-content:center;align-items:center;height:220px;">
+            <div style="text-align:center;opacity:.8">
+                <div style="font-size:42px;line-height:1.0;margin-bottom:6px;">🧭</div>
+                <div style="font-weight:700;font-size:18px;">Select stakeholder to proceed</div>
+                <div style="font-size:13px;">Choose <b>Account</b> in filters, including <b>Client Name</b>.</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    # Early exit: keep filters visible but skip the rest of the page
+    st.stop()
 
 # -----------------------------
 # Two-column layout
@@ -130,8 +161,8 @@ with left:
         unsafe_allow_html=True
     )
 
-    with st.container(border=True):
-        row = flt5.iloc[0] if not flt5.empty else (flt4.iloc[0] if not flt4.empty else None)
+    with st.container(border=True,height=580):
+        row = flt6.iloc[0] if not flt6.empty else (flt5.iloc[0] if not flt5.empty else None)
 
         if row is not None:
             # CEO chain (persona -> ... -> CEO) then reverse to CEO -> ... -> persona
@@ -176,7 +207,7 @@ with right:
         unsafe_allow_html=True
     )
 
-    with st.container(border=True):
+    with st.container(border=True,height=580):
         if 'row' in locals() and row is not None:
             person_name = row.get("client_name", "")
 
@@ -210,6 +241,26 @@ with st.container(border=True):
             )
     else:
         st.info("Select a client above to view details.")
+
+
+# --- After your two columns & editable tables ---
+st.markdown("---")
+st.markdown("## Insights")
+
+if 'row' in locals() and row is not None:
+    # Decide the company name for insights (we'll use 'account' as the company)
+    company_name = (row.get("account") or "").strip()
+    # Optional: tie insights to the focal person for KPI generation later
+    focal_person_id = choose_person_id(row)  # email if available, else client_name
+    render_company_insights_inline(
+        company=company_name,
+        person_id=str(focal_person_id),
+        default_top_k=12,
+        default_chunk_tokens=900,
+    )
+else:
+    st.info("Select a client to view company insights.")
+
 
 st.divider()
 if st.button("Logout"):
