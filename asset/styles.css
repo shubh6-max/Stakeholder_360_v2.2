@@ -94,7 +94,14 @@ label[data-testid="stWidgetLabel"] > div > p {
   transform: translateY(-1px);
   box-shadow: 0 8px 16px rgba(0,0,0,0.12);
 }
-
+/* Special class for right-aligned buttons */
+div[data-testid="stButton"][key="get_insights_btn"] {
+  display: flex;
+  justify-content: flex-end;
+}
+.stButton > button {
+  width: auto !important; /* override 100% width */
+}
 /* Actions row wrapper to keep buttons aligned */
 .auth-actions { margin-top: .5rem; }
 .auth-actions .stButton > button { width: 100%; }

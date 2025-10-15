@@ -16,9 +16,6 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 # persistence helpers (yours)
 from features.stakeholders.service import (
     normalize_payload,
-    diff_changes,
-    build_update_key,
-    update_centralize_record,
     update_centralize_by_identity
 )
 
@@ -277,7 +274,7 @@ gb.configure_column(
 )
 gb.configure_column("Value", editable=True)
 gb.configure_grid_options(
-    domLayout="autoHeight",
+    domLayout="autoHeight",   # "normal" | "autoHeight" | "print"
     suppressHorizontalScroll=True,
     stopEditingWhenCellsLoseFocus=True,
 
@@ -293,6 +290,7 @@ resp = AgGrid(
     data_return_mode=DataReturnMode.AS_INPUT,
     allow_unsafe_jscode=False,
     key="edit_grid",
+ 
 )
 edited_df = pd.DataFrame(resp["data"])
 

@@ -3,7 +3,7 @@ from typing import List, Dict
 import pandas as pd
 import streamlit as st
 from urllib.parse import urlencode
-
+import traceback
 from utils.page_config import set_common_page_config
 from utils.layout import apply_global_style, render_topbar
 from utils.auth import is_authenticated, logout, issue_jwt
@@ -16,10 +16,19 @@ from features.orgchart.builder import (
 from features.orgchart.renderer import render_upward_graph
 
 from components.details import render_avatar_only, render_info_only
-from components.aggrid_sections_all import render_all_sections
+# from components.aggrid_sections_all import render_all_sections
 
 from components.sections_readonly import render_sections_readonly
-from urllib.parse import urlencode, quote
+# from urllib.parse import urlencode, quote
+
+# from components.insights_embed import render_company_insights_inline
+
+from features.insights.retrieve import run_kpis_for_persona
+from components.kpi_view import render_kpis
+
+from components.insights_view import render_insights
+from features.insights.pipeline import run_end_to_end  # uses DB-first, creates embeddings as needed
+
 # ------------------------------------------------------------------------------
 # Page setup
 # ------------------------------------------------------------------------------
@@ -167,6 +176,7 @@ if not is_ready:
     )
     st.stop()
 
+st.markdown("---")
 # ------------------------------------------------------------------------------
 # Two-column layout (Org chart + LinkedIn panel)
 # ------------------------------------------------------------------------------
@@ -178,16 +188,29 @@ left, right = st.columns([1, 1])
 
 with left:
     icon_url = "https://img.icons8.com/?size=100&id=11269&format=png&color=000000"
+    # st.markdown(
+    #     f"""
+    #     <div style="display:flex; align-items:center; gap:8px;">
+    #         <img src="{icon_url}" width="24" height="24">
+    #         <h3 style="margin:0;">Upward Org Chart</h3>
+    #     </div>
+    #     """,
+    #     unsafe_allow_html=True
+    # )
     st.markdown(
         f"""
-        <div style="display:flex; align-items:center; gap:8px;">
-            <img src="{icon_url}" width="24" height="24">
-            <h3 style="margin:0;">Upward Org Chart</h3>
+        <div style="
+          display:flex;justify-content:space-between;align-items:center;
+          background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+          padding:10px 12px;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <img src="https://img.icons8.com/?size=100&id=11269&format=png&color=000000" width="22" height="22" alt="info">
+            <div style="font-size:16px;font-weight:700;">Upward Org Chart</div>
+          </div>
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
-
     with st.container(border=True,height=580):
         row = flt_f.iloc[0] if not flt_f.empty else None
         if row is not None:
@@ -255,16 +278,29 @@ with left:
 
 with right:
     icon_url = "https://img.icons8.com/?size=100&id=114049&format=png&color=000000"
+    # st.markdown(
+    #     f"""
+    #     <h3 style="display:flex; align-items:center; gap:8px; margin:0;">
+    #         <img src="{icon_url}" width="12" height="12" style="vertical-align:middle;">
+    #         Details
+    #     </h3>
+    #     """,
+    #     unsafe_allow_html=True
+    # )
     st.markdown(
         f"""
-        <h3 style="display:flex; align-items:center; gap:8px; margin:0;">
-            <img src="{icon_url}" width="12" height="12" style="vertical-align:middle;">
-            Details
-        </h3>
+        <div style="
+          display:flex;justify-content:space-between;align-items:center;
+          background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+          padding:10px 12px;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <img src="https://img.icons8.com/?size=100&id=Uj9DyJeLazL6&format=png&color=000000" width="22" height="22" alt="info">
+            <div style="font-size:16px;font-weight:700;">Linkedin details</div>
+          </div>
+        </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
-
     with st.container(border=True, height=580):
         if 'row' in locals() and row is not None:
             person_name = row.get("client_name", "")
@@ -285,7 +321,7 @@ with right:
 # ------------------------------------------------------------------------------
 # Editable sections (below both columns)
 # ------------------------------------------------------------------------------
-st.markdown("---")
+# st.markdown("---")
 # ---- Full-width read-only sections (below both columns) ----
 with st.container(border=True, height="content"):
     if 'row' in locals() and row is not None:
@@ -356,19 +392,23 @@ with st.container(border=True, height="content"):
     else:
         st.info("Select a client above to view details.")
 
+# --- Insights (RAG) + KPIs (single button) ---
+st.markdown("---")
+persona_row = row.to_dict()
+company_name = (row.get("account") or "").strip()
+
+if st.button("Get insights"):
+    try:
+        # (Optional) ensure annual report exists & cache the pain-points table on first run
+        # This happens implicitly when run_kpis_for_persona calls ensure_company_indexed().
+        kpi_result = run_kpis_for_persona(company_name, persona_row, top_k=8)
+        with st.container(border=True):
+            render_kpis(kpi_result)
+    except Exception:
+        st.error("KPI generation failed — full traceback below:")
+        st.code(traceback.format_exc(), language="python")
+
 # ------------------------------------------------------------------------------
-# Insights block (keep commented for now; enable later as needed)
-# ------------------------------------------------------------------------------
-# st.markdown("---")
-# if 'row' in locals() and row is not None:
-#     company_name = (row.get("account") or "").strip()
-#     focal_person_id = choose_person_id(row)
-#     render_company_insights_inline(
-#         company=company_name,
-#         person_id=str(focal_person_id),
-#     )
-# else:
-#     st.info("Select a client to view company insights.")
 
 st.divider()
 if st.button("Logout"):

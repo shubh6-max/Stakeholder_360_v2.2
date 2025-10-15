@@ -2,98 +2,115 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, asdict
-from functools import lru_cache
-from typing import Dict, List, Tuple
+import re
+from dataclasses import dataclass
+from typing import Optional
 
-# It's safe to call even if already called elsewhere.
-try:
-    from dotenv import load_dotenv  # optional in prod, handy locally
-    load_dotenv()
-except Exception:
-    pass
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from sqlalchemy.engine import Engine
+from utils.db import get_engine
+
+
+def _env(name: str, default: Optional[str] = None) -> str:
+    v = os.getenv(name, default)
+    if v is None or str(v).strip() == "":
+        if default is None:
+            raise RuntimeError(f"Missing required environment variable: {name}")
+        return default
+    return v
+
+
+def _slug_company(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "_", (name or "").strip().lower())
+    return re.sub(r"_+", "_", s).strip("_") or "company"
 
 
 @dataclass(frozen=True)
-class Settings:
-    # --- External APIs ---
-    tavily_api_key: str
-    jina_api_key: str
+class RAGSettings:
+    # ---- Azure OpenAI (Chat) ----
+    aoai_endpoint: str = _env("AZURE_ENDPOINT")
+    aoai_api_key: str = _env("AZURE_API_KEY")
+    aoai_api_version: str = _env("AZURE_API_VERSION", "2024-06-01")
+    aoai_chat_deployment: str = _env("AZURE_DEPLOYMENT", "gpt-4o-mini")
 
-    # --- Azure OpenAI (chat + embed) ---
-    azure_endpoint: str
-    azure_api_key: str
-    azure_gpt_deployment: str
-    azure_gpt_version: str
-    azure_embed_deployment: str
-    azure_embed_version: str
+    # ---- Azure OpenAI (Embeddings) ----
+    aoai_embed_deployment: str = _env("AZURE_EMBED_DEPLOYMENT", "text-embedding-3-small")
+    aoai_embed_api_version: str = _env("AZURE_EMBED_VERSION", "2023-05-15")
+    embed_dimension: int = int(os.getenv("AZURE_OPENAI_EMBED_DIM", "1536"))
 
-    # --- Runtime knobs ---
-    http_timeout: int = 30               # seconds
-    chunk_tokens: int = 900              # tokens per chunk for embedding
-    top_k: int = 12                      # retrieval depth
-    trust_jina_url: bool = True          # proceed even if not strictly PDF
-    skip_tavily_check: bool = False      # allow bypassing Tavily YES/NO
-    enable_db_cache: bool = True         # store / read results from DB cache
+    # ---- Vector store (PGVector) ----
+    collection_prefix: str = os.getenv("RAG_COLLECTION_PREFIX", "rag_co")
+    distance: str = os.getenv("RAG_DISTANCE", "cosine")  # cosine|l2|ip
 
-    def to_dict(self) -> Dict[str, object]:
-        d = asdict(self).copy()
-        # Never expose secrets if this ends up logged
-        for k in ("tavily_api_key", "jina_api_key", "azure_api_key"):
-            if k in d and isinstance(d[k], str):
-                d[k] = f"{d[k][:4]}…"
-        return d
+    # ---- Chunking / Retrieval (defaults tuned for annual reports) ----
+    chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "1200"))
+    chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
+    min_top_k: int = int(os.getenv("RAG_MIN_TOPK", "6"))
+    max_top_k: int = int(os.getenv("RAG_MAX_TOPK", "18"))
+
+    # ---- Caching to SQL (reusing your scout.company_insights) ----
+    enable_db_cache: bool = os.getenv("RAG_ENABLE_DB_CACHE", "true").lower() in ("1", "true", "yes")
 
 
-_REQUIRED_VARS: List[str] = [
-    "TAVILY_API_KEY",
-    "JINA_API_KEY",
-    "AZURE_ENDPOINT",
-    "AZURE_API_KEY",
-    "AZURE_DEPLOYMENT",
-    "AZURE_API_VERSION",
-    "AZURE_EMBED_DEPLOYMENT",
-    "AZURE_EMBED_VERSION",
-]
-
-def _read_env() -> Tuple[Dict[str, str], List[str]]:
-    env = {k: os.getenv(k, "").strip() for k in _REQUIRED_VARS}
-    missing = [k for k, v in env.items() if not v]
-    return env, missing
+def get_settings() -> RAGSettings:
+    return RAGSettings()
 
 
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    env, missing = _read_env()
-    if missing:
-        # Fail fast with a crisp message (avoid printing actual secret values)
-        raise RuntimeError(
-            "❌ Insights config is incomplete. Missing environment variables: "
-            + ", ".join(missing)
-            + "\nPlease add them to your .env or deployment secrets."
-        )
-
-    # Optional knobs with sensible defaults
-    http_timeout = int(os.getenv("HTTP_TIMEOUT", "30"))
-    chunk_tokens = int(os.getenv("INSIGHTS_CHUNK_TOKENS", "900"))
-    top_k = int(os.getenv("INSIGHTS_TOP_K", "12"))
-    trust_jina_url = os.getenv("INSIGHTS_TRUST_JINA_URL", "true").lower() in ("1", "true", "yes", "y")
-    skip_tavily_check = os.getenv("INSIGHTS_SKIP_TAVILY_CHECK", "false").lower() in ("1", "true", "yes", "y")
-    enable_db_cache = os.getenv("INSIGHTS_ENABLE_DB_CACHE", "true").lower() in ("1", "true", "yes", "y")
-
-    return Settings(
-        tavily_api_key=env["TAVILY_API_KEY"],
-        jina_api_key=env["JINA_API_KEY"],
-        azure_endpoint=env["AZURE_ENDPOINT"].rstrip("/"),
-        azure_api_key=env["AZURE_API_KEY"],
-        azure_gpt_deployment=env["AZURE_DEPLOYMENT"],
-        azure_gpt_version=env["AZURE_API_VERSION"],
-        azure_embed_deployment=env["AZURE_EMBED_DEPLOYMENT"],
-        azure_embed_version=env["AZURE_EMBED_VERSION"],
-        http_timeout=http_timeout,
-        chunk_tokens=chunk_tokens,
-        top_k=top_k,
-        trust_jina_url=trust_jina_url,
-        skip_tavily_check=skip_tavily_check,
-        enable_db_cache=enable_db_cache,
+def make_chat_model() -> AzureChatOpenAI:
+    """
+    LangChain chat LLM (Azure OpenAI).
+    """
+    stg = get_settings()
+    return AzureChatOpenAI(
+        azure_endpoint=stg.aoai_endpoint,
+        api_key=stg.aoai_api_key,
+        api_version=stg.aoai_api_version,
+        model=stg.aoai_chat_deployment,
+        temperature=0.2,
+        timeout=120,
+        max_retries=2,
     )
+
+
+def make_embeddings() -> AzureOpenAIEmbeddings:
+    """
+    LangChain embeddings (Azure OpenAI). Must match pgvector dimension.
+    """
+    stg = get_settings()
+    return AzureOpenAIEmbeddings(
+        azure_endpoint=stg.aoai_endpoint,
+        api_key=stg.aoai_api_key,
+        api_version=stg.aoai_embed_api_version,
+        model=stg.aoai_embed_deployment,
+        chunk_size=64,  # batching requests
+    )
+
+
+def pg_conn_str_from_engine(engine: Optional[Engine] = None) -> str:
+    """
+    Reuse your configured SQLAlchemy engine to get a full connection URL
+    (including sslmode=require).
+    """
+    eng = engine or get_engine()
+    # include password in the rendered URL for PGVector
+    return eng.url.render_as_string(hide_password=False)
+
+
+def company_collection_name(company: str) -> str:
+    """
+    Deterministic PGVector collection name per company.
+    """
+    stg = get_settings()
+    slug = _slug_company(company)
+    return f"{stg.collection_prefix}_{slug}"
+
+
+def infer_top_k(num_chunks: int) -> int:
+    """
+    Dynamic K based on corpus size; clamped to [min_top_k, max_top_k].
+    """
+    stg = get_settings()
+    if num_chunks <= 0:
+        return stg.min_top_k
+    base = max(stg.min_top_k, min(stg.max_top_k, (num_chunks // 8) + stg.min_top_k))
+    return int(base)

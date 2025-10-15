@@ -1,157 +1,83 @@
 # features/insights/clients.py
 from __future__ import annotations
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from functools import lru_cache
-from typing import Dict, Optional
+import os
+from typing import Iterable, List, Optional
 
-from openai import AzureOpenAI
-
-from .config import get_settings
+from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 
 
-# --------- HTTP session (Jina & generic) ---------
-def _build_retrying_session(
-    *,
-    total: int = 4,
-    backoff_factor: float = 0.6,
-    status_forcelist: tuple = (429, 500, 502, 503, 504),
-    allowed_methods: frozenset = frozenset({"GET", "POST"}),
-    timeout: Optional[int] = None,
-    headers: Optional[Dict[str, str]] = None,
-) -> requests.Session:
+# Keep this in sync with utils.rag_db.EMBED_DIM
+EMBED_DIM = 1536  # text-embedding-3-small → 1536 dims
+
+
+def _get_env(name: str, *, required: bool = True, default: Optional[str] = None) -> str:
+    val = os.getenv(name, default)
+    if required and not (val and str(val).strip()):
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return str(val).strip() if val is not None else ""
+
+
+def get_azure_embeddings() -> AzureOpenAIEmbeddings:
     """
-    Requests session with sane retry/backoff defaults.
+    Returns a LangChain embeddings client for Azure OpenAI.
+    Expects these env vars:
+      - AZURE_OPENAI_API_KEY
+      - AZURE_OPENAI_ENDPOINT               (e.g. https://openai-scout-001.openai.azure.com/)
+      - AZURE_OPENAI_API_VERSION            (e.g. 2023-05-15)
+      - AZURE_EMBED_DEPLOYMENT              (your deployment name for text-embedding-3-small)
     """
-    s = requests.Session()
-    retry = Retry(
-        total=total,
-        read=total,
-        connect=total,
-        backoff_factor=backoff_factor,
-        status_forcelist=status_forcelist,
-        allowed_methods=allowed_methods,
-        raise_on_status=False,
-        respect_retry_after_header=True,
+    api_key = _get_env("AZURE_OPENAI_API_KEY")
+    endpoint = _get_env("AZURE_OPENAI_ENDPOINT")
+    api_version = _get_env("AZURE_OPENAI_API_VERSION", required=True)  # you said "2023-05-15"
+    deploy = _get_env("AZURE_EMBED_DEPLOYMENT")  # deployment for text-embedding-3-small
+
+    # Note: model name is inferred by Azure via the deployment; we don’t pass "model=" here.
+    emb = AzureOpenAIEmbeddings(
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        openai_api_version=api_version,
+        azure_deployment=deploy,
     )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=20)
-    s.mount("https://", adapter)
-    s.mount("http://", adapter)
-
-    # Defaults (identifiable UA is helpful for troubleshooting)
-    default_headers = {
-        "User-Agent": "Stakeholder360/insights (Streamlit)",
-        "Accept": "application/json, */*;q=0.5",
-    }
-    if headers:
-        default_headers.update(headers)
-    s.headers.update(default_headers)
-
-    # Attach a per-request timeout via a wrapper
-    if timeout is not None:
-        original_request = s.request
-
-        def _request_with_timeout(method, url, **kwargs):
-            if "timeout" not in kwargs:
-                kwargs["timeout"] = timeout
-            return original_request(method, url, **kwargs)
-
-        s.request = _request_with_timeout  # type: ignore[attr-defined]
-
-    return s
+    # Sanity note: if you switch to a different deployment (e.g., 3072 dims), update EMBED_DIM.
+    return emb
 
 
-@lru_cache(maxsize=1)
-def get_http_session() -> requests.Session:
+def get_chat_llm(temperature: float = 0.2) -> AzureChatOpenAI:
     """
-    Shared session for general outbound calls (uses global HTTP_TIMEOUT).
+    Returns an Azure Chat LLM for summarization/extraction.
+    Expects:
+      - AZURE_OPENAI_API_KEY
+      - AZURE_OPENAI_ENDPOINT
+      - AZURE_OPENAI_API_VERSION           (e.g. 2024-02-15-preview is common for chat)
+      - AZURE_CHAT_DEPLOYMENT              (your GPT-4/4o/4.1 deployment name)
     """
-    stg = get_settings()
-    return _build_retrying_session(timeout=stg.http_timeout)
+    api_key = _get_env("AZURE_API_KEY")
+    endpoint = _get_env("AZURE_ENDPOINT")
+    api_version = _get_env("AZURE_API_VERSION")  # can be shared with embeddings if same
+    deploy = _get_env("AZURE_DEPLOYMENT")
 
-
-@lru_cache(maxsize=1)
-def get_jina_session() -> requests.Session:
-    """
-    Session configured with Jina API auth.
-    """
-    stg = get_settings()
-    headers = {
-        "Authorization": f"Bearer {stg.jina_api_key}",
-        "X-Respond-With": "no-content",  # request structured JSON where supported
-    }
-    return _build_retrying_session(timeout=stg.http_timeout, headers=headers)
-
-
-# --------- Tavily client (lazy) ---------
-class TavilyLite:
-    """
-    Minimal Tavily client wrapper with our retrying session, to avoid
-    importing the full SDK if you prefer a light footprint.
-
-    If you prefer the official SDK, you can swap this with:
-        from tavily import TavilyClient
-        return TavilyClient(api_key=stg.tavily_api_key)
-    """
-    def __init__(self, api_key: str, session: requests.Session):
-        self.api_key = api_key
-        self.session = session
-        self.base_url = "https://api.tavily.com/search"
-
-    def search(self, *, query: str, max_results: int = 3, include_answer: str = "basic") -> Dict:
-        payload = {
-            "api_key": self.api_key,
-            "query": query,
-            "search_depth": "advanced",
-            "max_results": max_results,
-            "include_answer": include_answer,
-        }
-        resp = self.session.post(self.base_url, json=payload)
-        resp.raise_for_status()
-        return resp.json()
-
-
-@lru_cache(maxsize=1)
-def get_tavily():
-    stg = get_settings()
-    # Use our shared session for consistency
-    return TavilyLite(stg.tavily_api_key, get_http_session())
-
-
-# --------- Azure OpenAI clients ---------
-@lru_cache(maxsize=1)
-def get_gpt_client() -> AzureOpenAI:
-    """
-    Azure OpenAI chat client (for GPT completions).
-    """
-    stg = get_settings()
-    return AzureOpenAI(
-        azure_endpoint=stg.azure_endpoint,
-        api_key=stg.azure_api_key,
-        api_version=stg.azure_gpt_version,
+    llm = AzureChatOpenAI(
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        openai_api_version=api_version,
+        azure_deployment=deploy,
+        temperature=temperature,
     )
+    return llm
 
 
-@lru_cache(maxsize=1)
-def get_embed_client() -> AzureOpenAI:
+def embed_texts(texts: Iterable[str]) -> List[List[float]]:
     """
-    Azure OpenAI embeddings client.
-    Note: Same SDK class, different api_version (embed) per your settings.
+    Convenience helper: embed an iterable of strings with the configured Azure embeddings client.
     """
-    stg = get_settings()
-    return AzureOpenAI(
-        azure_endpoint=stg.azure_endpoint,
-        api_key=stg.azure_api_key,
-        api_version=stg.azure_embed_version,
-    )
-
-
-# --------- Helpers to access deployment names ---------
-def get_gpt_deployment_name() -> str:
-    return get_settings().azure_gpt_deployment
-
-
-def get_embed_deployment_name() -> str:
-    return get_settings().azure_embed_deployment
+    emb = get_azure_embeddings()
+    # LangChain’s .embed_documents returns List[List[float]]
+    vectors = emb.embed_documents(list(texts))
+    # Optional: enforce expected dimension to avoid pgvector/IVFFLAT surprises
+    if vectors and len(vectors[0]) != EMBED_DIM:
+        raise RuntimeError(
+            f"Embedding dimension mismatch: got {len(vectors[0])}, expected {EMBED_DIM}. "
+            "Update utils.rag_db.EMBED_DIM and the IVFFLAT index if you changed deployments."
+        )
+    return vectors
