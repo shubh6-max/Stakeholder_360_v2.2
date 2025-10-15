@@ -1,13 +1,20 @@
 /* ---------- Base layout ---------- */
 .stApp {
-  background: #EBE3D6; /* matches config.toml */
+  background: linear-gradient(
+    135deg,
+    #FF9A8B 0%,
+    #FF6A88 30%,
+    #FF99AC 60%,
+    #AFA8F8 100%
+  );
+  background-attachment: fixed;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
 /* Reduce default padding a bit */
 .block-container {
   padding-top: 1rem !important;
-  padding-bottom: 5rem !important;
+  padding-bottom: 3rem !important; /* was 5rem */
 }
 
 /* Hide Streamlit sidebar across pages (we're using topbar) */
@@ -30,14 +37,12 @@
 .login-card {
   background: #FFFFFF;
   max-width: 450px;
-  /* height: 100px;  <-- remove fixed height */
   margin: 4vh auto 0;
   padding: 2rem 2rem 1.5rem;
   border-radius: 14px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.12);
-  text-align: left; /* form labels look cleaner left-aligned */
+  text-align: left;
 }
-
 .login-card h2 {
   margin: 0 0 1.25rem 0;
   color: #213547;
@@ -47,14 +52,13 @@
 /* ---------- Inputs ---------- */
 .stTextInput > div > div > input,
 .stPassword > div > div > input {
-  /* border: 1px solid #dcdfe4; */
   border-radius: 10px;
   padding: 10px 10px;
   background: #fff;
   color: #213547;
   transition: border-color .2s ease, box-shadow .2s ease;
+  border: 1px solid #dcdfe4;
 }
-
 .stTextInput > div > div > input:focus,
 .stPassword > div > div > input:focus {
   outline: none !important;
@@ -78,27 +82,24 @@ label[data-testid="stWidgetLabel"] > div > p {
   border-radius: 10px;
   padding: 0.8rem 1rem;
   font-weight: bold;
-  background: #0072FF;      /* primary */
+  background: #0072FF;
   color: #fff;
   cursor: pointer;
   transition: transform .08s ease, box-shadow .2s ease, background .2s ease;
 }
-
 .stButton > button:hover,
 .stDownloadButton > button:hover,
 .stForm .stButton > button:hover {
-  background: #005fcc;      /* hover */
+  background: #005fcc;
   transform: translateY(-1px);
   box-shadow: 0 8px 16px rgba(0,0,0,0.12);
 }
 
 /* Actions row wrapper to keep buttons aligned */
-.auth-actions {
-  margin-top: .5rem;
-}
+.auth-actions { margin-top: .5rem; }
 .auth-actions .stButton > button { width: 100%; }
 
-/* Inline link style (if you use st.markdown with <a>) */
+/* Inline link style */
 a.muted-link { color: #0072FF; text-decoration: none; }
 a.muted-link:hover { text-decoration: underline; }
 
@@ -106,22 +107,9 @@ a.muted-link:hover { text-decoration: underline; }
 .login-card .stAlert { text-align: center; }
 
 /* ---------- Alignment helpers ---------- */
-.center-text {
-  text-align: center;
-}
-
-.center-block {
-  display: block;
-  margin-left: auto;
-  margin-right: auto;
-  text-align: center;
-}
-
-.center-flex {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+.center-text { text-align: center; }
+.center-block { display: block; margin-left: auto; margin-right: auto; text-align: center; }
+.center-flex { display: flex; align-items: center; justify-content: center; }
 
 /* --- Topbar --- */
 .topbar {
@@ -141,39 +129,54 @@ a.muted-link:hover { text-decoration: underline; }
   border-radius: 999px;
   background: linear-gradient(90deg,#bfe3ff,#e6f4ff);
   border: 1px solid #e0edf7;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.6),
-              0 1px 3px rgba(0,0,0,.05);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.6), 0 1px 3px rgba(0,0,0,.05);
   font-size: 14px;
   font-weight: 700;
   color: #213547;
   letter-spacing: .2px;
 }
 
-/* Uniform spacing for all info cards */
-.s360-card {                /* uniform spacing */
-  margin-bottom: 16px;      /* overridden from Python via inline style if needed */
+/* ---------- S360 info cards (sections) ---------- */
+
+/* Make the wrapper transparent to avoid brown/beige fill from gradient */
+.s360-card {
+  margin: 0 0 6px 0;              /* tighter vertical spacing */
   border-radius: 10px;
+  background: transparent !important; /* <— key change */
+  box-shadow: none;
 }
+
+/* Header styling (reduce giant gap; keep compact) */
 .s360-card .s360-card-header {
   background: #dbeafe;
   border: 1px solid #cfe0ff;
   border-radius: 8px 8px 0 0;
-  padding: 10px 12px;
+  padding: 8px 12px;              /* was 0; gives breathing room */
   font-weight: 700;
   color: #1f2a44;
-}
-.s360-card .s360-card-footer {
-  height: 10px;
-  border: 1px solid #e7edf6;
-  border-top: none;
-  border-radius: 0 0 8px 8px;
-  background: #fff;
+  margin-top: 8px;                /* was 100px; removes huge blank space */
 }
 
-/* Optional: a minimal card body height so tiny tables don't “collapse” */
-.s360-card .ag-theme-streamlit {
-  min-height: 200px; /* adjust if you want tighter cards */
+/* Footer hidden (prevents extra blank area) */
+.s360-card .s360-card-footer { display: none; }
+
+/* Keep AgGrid background white (prevents brown body) */
+.ag-theme-streamlit,
+.ag-theme-streamlit .ag-root-wrapper,
+.ag-theme-streamlit .ag-root-wrapper-body,
+.ag-theme-streamlit .ag-body-viewport,
+.ag-theme-streamlit .ag-center-cols-viewport {
+  background: #fff !important;
 }
+
+/* When using autoHeight, let the viewport expand (no fixed tall area) */
+.ag-theme-streamlit .ag-center-cols-viewport { overflow-y: visible !important; }
+
+/* Optional: reduce column gaps across the page */
+[data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
+
+/* Optional: a minimal card body height – set to 0 so tiny tables don’t create filler */
+.s360-card .ag-theme-streamlit { min-height: 0; }
 
 /* ---------- Responsive tweak ---------- */
 @media (max-width: 480px) {

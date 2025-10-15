@@ -95,11 +95,14 @@ def render_insights(result: Dict[str, Any] | None) -> None:
         else:
             _badge("No PDF URL detected", None, color="#ef4444")
 
+    # inside render_insights(...)
     with cols[1]:
         _meta_row([
             ("Runtime", f"{elapsed:.2f}s"),
             ("Cache", "hit" if cached else "miss"),
+            ("Source", result.get("source_type", "annual_pdf")),
         ])
+
 
     st.markdown("<hr style='border:none;border-top:1px solid #e5e7eb;margin:10px 0;'/>", unsafe_allow_html=True)
 

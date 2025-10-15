@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
-
+from typing import Dict, Optional
 import re
 import pandas as pd
 from sqlalchemy import text
@@ -356,3 +356,77 @@ def _audit_changes(
         "ck": client_key or "",
         "chg": pd.Series(changes).to_json(),
     })
+
+
+_ALLOWED_COLUMNS = set([
+    "account","subsidiary","working_group","business_unit","service_line",
+    "lead_priority","client_name","client_designation","seniority_level",
+    "reporting_manager","reporting_manager_designation",
+    "email_address","linkedin_url","location",
+    "internal_research","external_research","personalization_notes",
+    "vendor_name","contractor_count",
+    "reachout_lever","reachout_channel","pursued_in_past","context","introduction_path",
+    "mathco_spoc_1","mathco_spoc_2",
+    "first_outreach_date","last_outreach_date",
+])
+
+def update_centralize_by_identity(
+    payload: Dict[str, object],
+    *,
+    email: Optional[str] = None,
+    client: Optional[str] = None,
+    account: Optional[str] = None,
+) -> Dict[str, object]:
+    """
+    Direct UPDATE for scout.centralize_db by identity.
+    Identity is either:
+      - email_address = :email, OR
+      - (client_name = :client AND account = :account)
+
+    Returns: {"ok": bool, "updated_at": iso, "rows": int} or {"ok": False, "error": "..."}
+    """
+    if not payload:
+        return {"ok": False, "error": "Empty payload."}
+
+    where = None
+    params: Dict[str, object] = {}
+
+    if email:
+        where = "email_address = :_email"
+        params["_email"] = email.strip()
+    elif client and account:
+        where = "client_name = :_client AND account = :_account"
+        params["_client"] = client.strip()
+        params["_account"] = account.strip()
+    else:
+        return {"ok": False, "error": "Missing identity (email OR client+account)."}
+
+    # Only allow known columns
+    cols = [c for c in payload.keys() if c in _ALLOWED_COLUMNS]
+    if not cols:
+        return {"ok": False, "error": "No allowed columns in payload."}
+
+    # Build SET clause + last_update_date
+    set_parts = []
+    for c in cols:
+        set_parts.append(f'{c} = :{c}')
+        params[c] = payload[c]
+
+    # last_update_date as an ISO string (your column is text)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S%z")
+    set_parts.append("last_update_date = :_ts")
+    params["_ts"] = ts
+
+    sql = f"""
+        UPDATE scout.centralize_db
+           SET {", ".join(set_parts)}
+         WHERE {where}
+    """
+    try:
+        eng = get_engine()
+        with eng.begin() as con:
+            res = con.execute(text(sql), params)
+            rows = res.rowcount or 0
+        return {"ok": rows > 0, "rows": rows, "updated_at": ts}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

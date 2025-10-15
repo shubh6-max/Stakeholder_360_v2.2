@@ -20,6 +20,20 @@ def _assign_colors(bus: List[str]) -> Dict[str, str]:
             uniq.append(b); seen.add(b)
     return {b: _PALETTE[i % len(_PALETTE)] for i, b in enumerate(uniq)}
 
+# ---------- label split helper ----------
+def _split_label_text(name: str, max_first_line: int = 12) -> str:
+    """
+    Insert a single '\n' into `name` to render on two lines.
+    Chooses the space nearest to `max_first_line` for a balanced split.
+    If no space exists, returns the original string.
+    """
+    s = " ".join((name or "").split())
+    if not s or " " not in s:
+        return s
+    spaces = [i for i, ch in enumerate(s) if ch == " "]
+    split_idx = min(spaces, key=lambda i: abs(i - max_first_line))
+    return s[:split_idx] + "\n" + s[split_idx + 1:]
+
 # ---------- Existing preview renderer (linear list) ----------
 def _to_tree_data_and_legend(chain: List[Union[SimpleNode, RichNode]]):
     if not chain:
@@ -37,7 +51,8 @@ def _to_tree_data_and_legend(chain: List[Union[SimpleNode, RichNode]]):
     bu_colors = _assign_colors([r["business_unit"] for r in rich])
 
     def mk_node(r: RichNode) -> dict:
-        d = {"name": r["name"], "value": r["designation"], "children": []}
+        nm = _split_label_text(r["name"])  # <- split name into two lines if possible
+        d = {"name": nm, "value": r["designation"], "children": []}
         col = bu_colors.get(r["business_unit"])
         if col:
             d["itemStyle"] = {"color": "#FFFFFF", "borderColor": col, "borderWidth": 2}
@@ -73,11 +88,11 @@ def _base_option(tree_data: dict) -> dict:
             "formatter": "{b}: {c}",
             "borderColor": "#E0E7EF", "backgroundColor": "#FFFFFF",
             "textStyle": {"color": "#213547"},
-            "extraCssText": "box-shadow: 0 6px 16px rgba(0,0,0,0.12);",
-            "rich": {"c": {"fontSize": 12, "color": "#5b6b7a", "padding": [0,0,0,6]}},
+            "extraCssText": "box-shadow: 0 6px 6px rgba(0,0,0,0.12);",
+            "rich": {"c": {"fontSize": 10, "color": "#5b6b7a", "padding": [0,0,0,6]}},
         },
         "series": [{
-            "type": "tree", 
+            "type": "tree",
             "data": [tree_data],
             "layout": "orthogonal",
             "orient": "vertical",
@@ -85,50 +100,56 @@ def _base_option(tree_data: dict) -> dict:
             "left": "5%", 
             "bottom": "10%", 
             "right": "15%",
-            "expandAndCollapse": True, 
+            "expandAndCollapse": True,
             "initialTreeDepth": -1,
-            "animationDuration": 300, 
+            "animationDuration": 300,
             "animationDurationUpdate": 300,
-            "nodeGap": 100,
-            "emphasis": {
-                    "focus": "descendant",
-                    "itemStyle": {"borderColor": "#0072FF", "borderWidth": 1},
-                    "label": {"fontSize": 12, "fontWeight": "bold"},
-                },
+
+            # For ECharts 'tree', sibling spacing is influenced by box height + container height.
             "edgeShape": "polyline",
             "edgeForkPosition": "100%",
-            "symbol": "Rect", 
-            "symbolSize": [155, 30],
+
+            "symbol": "Rect",
+            # Slightly taller boxes to accommodate two-line names
+            "symbolSize": [100, 40],
+
             "itemStyle": {
-                "borderColor": "#E0E7EF", 
-                "borderWidth": 1, 
+                "borderColor": "#E0E7EF",
+                "borderWidth": 1,
                 "color": "#FFFFFF",
-                "shadowBlur": 3, 
+                "shadowBlur": 3,
                 "shadowColor": "rgba(0,0,0,0.06)"
-                },
+            },
+
             "label": {
-                "show": True, 
-                "position": "inside", 
+                "show": True,
+                "position": "inside",
                 "verticalAlign": "middle",
-                "overflow": "break",
-                "align": "center", 
-                "fontSize": 12, 
+                "align": "center",
+                "fontSize": 12,
                 "fontWeight": "bold",
-                "lineHeight": 1, 
-                "color": "#213547"
-                },
-            "lineStyle": {
-                "color": "#AAB4C3",
-                "curveness": 0.0,
-                },
+                "lineHeight": 16,      # extra breathing room between two lines
+                "overflow": "breakAll",
+                "color": "#213547",
+            },
+
+            "emphasis": {
+                "focus": "descendant",
+                "itemStyle": {"borderColor": "#0072FF", 
+                              "borderWidth": 1},
+                "label": {"fontSize": 12, 
+                          "fontWeight": "bold"},
+            },
+
+            "lineStyle": {"color": "#AAB4C3", 
+                          "curveness": 0.0},
+
             "leaves": {
-                "label": {
-                    "position": "inside", 
-                    "align": "center",
-                    "fontSize": 12,
-                    }
-                    }
-            
+                "label": {"position": "inside", 
+                          "align": "center", 
+                          "fontSize": 12, 
+                          "lineHeight": 16}
+            }
         }],
     }
 
@@ -146,7 +167,7 @@ def render_upward_graph(
 def _collect_bus(node: dict, acc: List[str]):
     bu = node.get("bu", "") or node.get("business_unit", "")
     if bu: acc.append(bu)
-    for ch in node.get("children", []):
+    for ch in node.get("children", []) or []:
         _collect_bus(ch, acc)
 
 def _apply_colors(node: dict, bu_colors: Dict[str, str]):
@@ -155,12 +176,23 @@ def _apply_colors(node: dict, bu_colors: Dict[str, str]):
         node.setdefault("itemStyle", {})
         node["itemStyle"].update({"color": "#FFFFFF", "borderColor": bu_colors[bu], "borderWidth": 2})
         node.setdefault("label", {"color": "#213547"})
-    for ch in node.get("children", []):
+    for ch in node.get("children", []) or []:
         _apply_colors(ch, bu_colors)
+
+def _apply_label_wrapping(node: dict):
+    # Split node["name"] into two lines where sensible, then recurse.
+    if "name" in node:
+        node["name"] = _split_label_text(node.get("name", ""))
+    for ch in node.get("children", []) or []:
+        _apply_label_wrapping(ch)
 
 def render_org_tree(tree_data: dict, height: int = 1520, title: Optional[str] = None) -> None:
     if not tree_data:
         st.info("No org data available for this selection."); return
+
+    # Ensure names are two-line friendly before coloring
+    _apply_label_wrapping(tree_data)
+
     # Gather BUs and colorize nodes
     acc: List[str] = []
     _collect_bus(tree_data, acc)

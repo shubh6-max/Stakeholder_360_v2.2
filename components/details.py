@@ -156,7 +156,7 @@ def render_info_only(
     if show_card:
         card_open = f"""
         <div style="
-          width:100%;max-width:{max_width}px;
+          width:200%;max-width:{max_width}px;
           background:#fff;border:1px solid #e6eaf0;border-radius:14px;
           padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);
         ">
