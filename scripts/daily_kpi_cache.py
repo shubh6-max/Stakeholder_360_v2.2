@@ -58,7 +58,7 @@ from sqlalchemy.engine import Engine
 try:
     from psycopg2.errors import DeadlockDetected
 except Exception:  # pragma: no cover
-    class DeadlockDetected(Exception):  # fallback sentinel
+    class DeadlockDetected(Exception):
         pass
 
 from utils.db import get_engine
@@ -325,7 +325,6 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str, str, str, boo
             return company, persona_name, pk, True, None
 
         except DeadlockDetected as e:
-            # retry deadlocks with jitter
             if attempt >= RETRIES:
                 return company, persona_name, pk, False, f"deadlock: {e}"
             delay = backoff * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
@@ -339,7 +338,6 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str, str, str, boo
                 continue
 
             if _is_soft_no_context(e):
-                # treat as soft success so the run stays green
                 return company, persona_name, pk, True, "skipped: no context"
 
             if attempt >= RETRIES:
@@ -351,11 +349,45 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str, str, str, boo
     return company, persona_name, pk, False, "unknown error"
 
 # =========================
+# Schema ensure with auto-fix
+# =========================
+def ensure_schema_autofix(engine: Engine):
+    """
+    Call ensure_rag_schema(). If we hit the common embedding-dimension mismatch:
+    temporarily set RAG_AUTO_MIGRATE=1, run again, then restore the previous value.
+    """
+    try:
+        ensure_rag_schema(engine)
+        return
+    except RuntimeError as e:
+        msg = str(e)
+        needs_migrate = (
+            "rag.chunks.embedding has dim=" in msg and "RAG_EMBED_DIM=" in msg
+        )
+        if not needs_migrate:
+            raise
+
+    prev = os.environ.get("RAG_AUTO_MIGRATE", "")
+    try:
+        os.environ["RAG_AUTO_MIGRATE"] = "1"
+        print("⚙️  Detected embedding dim mismatch; enabling auto-migration...")
+        ensure_rag_schema(engine)
+        print("✅ Auto-migration complete.")
+    finally:
+        # Restore prior value (empty means unset)
+        if prev == "":
+            os.environ.pop("RAG_AUTO_MIGRATE", None)
+        else:
+            os.environ["RAG_AUTO_MIGRATE"] = prev
+
+# =========================
 # Main
 # =========================
 def main() -> int:
     eng = get_engine()
-    ensure_rag_schema(eng)
+
+    # Ensure schema with self-healing migration if dim mismatch
+    ensure_schema_autofix(eng)
     ensure_kpi_cache(eng)
 
     candidates = select_candidates(eng, n=BATCH_SIZE)
