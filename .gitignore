@@ -67,8 +67,8 @@ htmlcov/
 *.cer
 *.der
 *.json
-*.yml
-*.yaml
+# *.yml
+# *.yaml
 *.ini
 *.cfg
 config.json
