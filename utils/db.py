@@ -11,7 +11,7 @@ def get_engine() -> Engine:
     pg_user = os.getenv("PGUSER")
     pg_password = os.getenv("PGPASSWORD")
     pg_host = os.getenv("PGHOST")
-    pg_port = os.getenv("PGPORT", "5432")
+    pg_port = (os.environ.get("PGPORT") or "5432")
     pg_db = os.getenv("PGDATABASE")
 
     if not all([pg_user, pg_password, pg_host, pg_db]):
