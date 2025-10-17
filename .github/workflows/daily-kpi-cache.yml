@@ -23,15 +23,15 @@ jobs:
 
       # ---- Script tunables ----
       KPI_BATCH_SIZE: "600"
-      KPI_CACHE_TTL_DAYS: "14"
-      KPI_MAX_WORKERS: "4"
-      KPI_RETRIES: "4"
+      KPI_CACHE_TTL_DAYS: "90"
+      KPI_MAX_WORKERS: "1"
+      KPI_RETRIES: "2"
       KPI_BACKOFF_SECS: "1.2"
       KPI_EMBED_RPM: "1200"
       KPI_THROTTLE_SECS: "0.05"
 
       # ---- RAG / embeddings ----
-      RAG_AUTO_MIGRATE: "1"
+      RAG_AUTO_MIGRATE: "0"
       RAG_EMBED_DIM: "1536"
       RAG_EMBED_MODEL: "text-embedding-3-small"
 
@@ -44,7 +44,7 @@ jobs:
       PGSSLMODE: "require"
 
       # (Optional) single DSN if you prefer
-      PG_DSN: ${{ secrets.PG_DSN }}
+      # PG_DSN: ${{ secrets.PG_DSN }}
 
       # ---- Azure OpenAI (primary names your code expects) ----
       AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}

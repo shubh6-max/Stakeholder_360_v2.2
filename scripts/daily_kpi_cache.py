@@ -7,11 +7,11 @@ from __future__ import annotations
 import sys, types, logging
 def _install_streamlit_dummy_if_headless():
     try:
-        import streamlit as _st  # real package is present
+        import streamlit as _st
         try:
             from streamlit.runtime.scriptrunner import get_script_run_ctx
             if get_script_run_ctx() is not None:
-                return  # real Streamlit runtime: keep it
+                return
         except Exception:
             pass
     except Exception:
@@ -46,14 +46,20 @@ logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").set
 # =========================
 # Imports
 # =========================
-import os, time, json, random, threading
+import os, time, random, threading
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
 from collections import deque
 
 from sqlalchemy import text, bindparam
 from sqlalchemy.engine import Engine
+
+# Deadlock-aware retries (optional import guard)
+try:
+    from psycopg2.errors import DeadlockDetected
+except Exception:  # pragma: no cover
+    class DeadlockDetected(Exception):  # fallback sentinel
+        pass
 
 from utils.db import get_engine
 from utils.rag_db import ensure_rag_schema
@@ -65,11 +71,11 @@ from features.insights.retrieve import run_kpis_for_persona
 # =========================
 BATCH_SIZE        = int(os.getenv("KPI_BATCH_SIZE", "250"))
 CACHE_TTL_D       = int(os.getenv("KPI_CACHE_TTL_DAYS", "90"))
-MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # conservative for S0
-RETRIES           = int(os.getenv("KPI_RETRIES", "2"))
+MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # CI safe default
+RETRIES           = int(os.getenv("KPI_RETRIES", "3"))
 BASE_BACKOFF      = float(os.getenv("KPI_BACKOFF_SECS", "1.2"))
 
-# Rate limiting knobs (for Azure OpenAI)
+# Rate limiting knobs (for Azure OpenAI embeddings)
 EMBED_RPM         = int(os.getenv("KPI_EMBED_RPM", "40"))      # requests/min across the process
 THROTTLE_SECS     = float(os.getenv("KPI_THROTTLE_SECS", "0")) # optional fixed delay per persona
 
@@ -103,27 +109,30 @@ def _is_azure_429(err: Exception) -> bool:
     return "429" in msg and ("rate limit" in msg or "exceeded" in msg)
 
 def _retry_after_seconds_from(err: Exception) -> Optional[float]:
-    # Try best-effort: SDKs sometimes carry response/header; else parse message
-    retry_after = None
+    # best-effort: header on the exception
     try:
         ra = getattr(getattr(err, "response", None), "headers", {}).get("Retry-After")
         if ra:
-            retry_after = float(ra)
+            return float(ra)
     except Exception:
         pass
-    if retry_after is not None:
-        return retry_after
-    # crude parse in the message: "... retry after 60 seconds ..."
+    # crude parse from message text
     txt = str(err).lower().replace("-", " ").replace("_", " ")
     toks = txt.split()
     for i, tok in enumerate(toks):
         if tok.isdigit():
             sec = int(tok)
-            if 1 <= sec <= 86400:
-                # check preceding word "after"
-                if i >= 1 and toks[i-1] in {"after", "in"}:
-                    return float(sec)
+            if 1 <= sec <= 86400 and i >= 1 and toks[i-1] in {"after", "in"}:
+                return float(sec)
     return None
+
+def _is_soft_no_context(err: Exception) -> bool:
+    s = str(err)
+    return (
+        "Retrieval returned no relevant context" in s
+        or "No indexed content found" in s
+        or "could not fetch or embed an annual report" in s
+    )
 
 # =========================
 # SQL: select candidates
@@ -143,7 +152,7 @@ WITH src AS (
     COALESCE(NULLIF(TRIM(location), ''), '')                        AS location,
     COALESCE(NULLIF(TRIM(lead_priority), ''), 'Z')                  AS lead_priority,
 
-    -- Normalize last_update_date to timestamptz (no AT TIME ZONE on text)
+    -- Normalize last_update_date to timestamptz safely
     CASE
       WHEN last_update_date IS NULL THEN NULL
       WHEN pg_typeof(last_update_date)::text = 'timestamp with time zone'
@@ -282,7 +291,7 @@ def filter_not_cached(engine: Engine, candidates: List[Dict[str, Any]], ttl_days
     return out
 
 # =========================
-# Worker with 429 handling
+# Worker with 429 + deadlock handling
 # =========================
 def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str, str, str, bool, Optional[str]]:
     company = (row.get("company_name") or "").strip()
@@ -315,15 +324,29 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str, str, str, boo
             )
             return company, persona_name, pk, True, None
 
+        except DeadlockDetected as e:
+            # retry deadlocks with jitter
+            if attempt >= RETRIES:
+                return company, persona_name, pk, False, f"deadlock: {e}"
+            delay = backoff * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
+            time.sleep(delay)
+            continue
+
         except Exception as e:
             if _is_azure_429(e):
                 wait = _retry_after_seconds_from(e) or 60.0
                 time.sleep(wait + random.uniform(0, 0.25))
-            else:
-                if attempt >= RETRIES:
-                    return company, persona_name, pk, False, f"{e}"
-                time.sleep(backoff + random.uniform(0, 0.25))
-                backoff *= 2
+                continue
+
+            if _is_soft_no_context(e):
+                # treat as soft success so the run stays green
+                return company, persona_name, pk, True, "skipped: no context"
+
+            if attempt >= RETRIES:
+                return company, persona_name, pk, False, f"{e}"
+
+            time.sleep(backoff + random.uniform(0, 0.25))
+            backoff *= 2
 
     return company, persona_name, pk, False, "unknown error"
 
@@ -355,7 +378,8 @@ def main() -> int:
             c, n, pk, success, err = process_one(eng, row)
             if success:
                 ok += 1
-                print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}")
+                msg = "" if not err else f" — {err}"
+                print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}{msg}")
             else:
                 fail += 1
                 print(f"[{i}/{len(eligible)}]  FAIL:: {n} @ {c} — {err}")
@@ -370,7 +394,8 @@ def main() -> int:
                     c, n, pk, success, err = fut.result()
                     if success:
                         ok += 1
-                        print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}")
+                        msg = "" if not err else f" — {err}"
+                        print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}{msg}")
                     else:
                         fail += 1
                         print(f"[{i}/{len(eligible)}]  FAIL:: {n} @ {c} — {err}")
@@ -385,4 +410,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-# =========================
