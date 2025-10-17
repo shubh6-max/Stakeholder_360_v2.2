@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Union
 import streamlit as st
-
+import re
 # Accept either the typed KPIResult (from features/insights/retrieve.py)
 # or a plain dict with the same shape.
 KPIResultLike = Union[Dict[str, Any], "KPIResult"]
@@ -21,6 +21,19 @@ def _kpis(result: KPIResultLike) -> List[Dict[str, Any]]:
     if hasattr(result, "kpis"):
         return _get(result, "kpis") or []
     return result.get("kpis") or []
+
+def bullets_to_markdown(text: str) -> str:
+    s = ("" if text is None else str(text)).strip()
+    # 1) normalize newlines
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # 2) if there are inline bullets, put each on a new line as "- ..."
+    #    handles both inline " • " and start-of-line "• "
+    s = re.sub(r'\s*[\u2022\u00B7]\s*', '\n- ', s)  # \u2022=•, \u00B7=·
+    # 3) also handle cases where hyphens were used inline like " - "
+    s = re.sub(r'(?<!\n)\s+-\s+', '\n- ', s)
+    # 4) collapse accidental multiple newlines
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    return s.strip()
 
 
 def _coerce_str(v: Any) -> str:
@@ -115,7 +128,7 @@ def render_kpis(result: KPIResultLike) -> None:
         f"""
         <div style="
           display:flex;justify-content:space-between;align-items:center;
-          background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+          background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
           padding:10px 12px;margin:8px 0;">
           <div style="display:flex;align-items:center;gap:10px;">
             <img src="https://img.icons8.com/?size=100&id=0uRhf2mft47s&format=png&color=000000" width="22" height="22">
@@ -150,20 +163,40 @@ def render_kpis(result: KPIResultLike) -> None:
 
     for i, kpi in enumerate(kpis, 1):
         with st.container(border=True):
+
+            # st.markdown(
+            #     f"<div style='font-size:16px;font-weight:800;margin-bottom:4px;'>{i}) { _coerce_str(kpi.get('title')) or 'Untitled KPI' }</div>",
+            #     unsafe_allow_html=True,
+            # )
+            
             st.markdown(
-                f"<div style='font-size:16px;font-weight:800;margin-bottom:4px;'>#{i} — { _coerce_str(kpi.get('title')) or 'Untitled KPI' }</div>",
-                unsafe_allow_html=True,
-            )
+    f"""
+    <div style="
+        background-color: white;
+        border-radius: 10px;
+        padding: 8px 14px;
+        margin-bottom: 8px;
+        width: 40%;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        border: 1px solid #f0f0f0;
+    ">
+        <div style='font-size:16px; font-weight:800; color:#1E1E1E;'>
+            {i}) { _coerce_str(kpi.get('title')) or 'Untitled KPI' }
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
             col1, col2 = st.columns(2)
 
             with col1:
                 st.markdown("**Why it matters**")
-                st.write(_coerce_str(kpi.get("why_it_matters")) or "—")
+                st.write(bullets_to_markdown(_coerce_str(kpi.get("why_it_matters"))) or "—")
 
             with col2:
                 st.markdown("**How to measure**")
-                st.write(_coerce_str(kpi.get("how_to_measure")) or "—")
+                st.write(bullets_to_markdown(_coerce_str(kpi.get("how_to_measure"))) or "—")
 
             # st.markdown("**Suggested initiatives**")
             # inits = [s for s in (kpi.get("suggested_initiatives") or []) if _coerce_str(s)]

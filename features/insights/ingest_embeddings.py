@@ -57,9 +57,9 @@ def _get_encoder():
 
 def smart_chunk(
     text: str,
-    target_tokens: int = 900,
+    target_tokens: int = 1800,
     overlap_tokens: int = 120,
-    hard_limit_tokens: int = 1200,
+    hard_limit_tokens: int = 2400,
 ) -> List[Chunk]:
     """
     Token-aware chunker for long PDFs.

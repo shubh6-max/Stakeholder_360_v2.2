@@ -258,6 +258,7 @@ orig_df = _build_edit_df(row)
 # ──────────────────────────────────────────────────────────────────────────────
 display_df = orig_df.copy()
 
+# ---- GRID OPTIONS ----
 gb = GridOptionsBuilder.from_dataframe(display_df)
 gb.configure_default_column(
     wrapText=True, autoHeight=True, resizable=True, sortable=False, filter=False
@@ -265,7 +266,7 @@ gb.configure_default_column(
 gb.configure_column(
     "Field",
     editable=False,
-    width=430,
+    width=445,
     cellStyle={
         "fontWeight": "600",
         "backgroundColor": "#f7f9fc",
@@ -273,12 +274,17 @@ gb.configure_column(
     },
 )
 gb.configure_column("Value", editable=True)
+
+# IMPORTANT: use normal layout (enables scroll) instead of autoHeight
 gb.configure_grid_options(
-    domLayout="autoHeight",   # "normal" | "autoHeight" | "print"
+    domLayout="autoHeight",   # "normal"|"autoHeight"
     suppressHorizontalScroll=True,
     stopEditingWhenCellsLoseFocus=True,
-
 )
+
+# Optional: pagination, if you prefer pages over long scroll
+# gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=25)
+
 go = gb.build()
 
 resp = AgGrid(
@@ -286,12 +292,13 @@ resp = AgGrid(
     gridOptions=go,
     theme="streamlit",
     fit_columns_on_grid_load=True,
-    update_mode=GridUpdateMode.MODEL_CHANGED,   # <- always have latest in resp["data"]
+    update_mode=GridUpdateMode.MODEL_CHANGED,
     data_return_mode=DataReturnMode.AS_INPUT,
     allow_unsafe_jscode=False,
     key="edit_grid",
- 
+    height=1560,          # <-- gives you a fixed viewport with vertical scroll
 )
+
 edited_df = pd.DataFrame(resp["data"])
 
 # Build before/after maps keyed by DB column names (not labels)
@@ -389,3 +396,4 @@ if btn_save:
         st.error(f"Save failed: {res.get('error') or 'Unknown error'}")
 
 
+st.write(st.session_state)

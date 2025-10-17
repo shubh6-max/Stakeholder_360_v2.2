@@ -1,14 +1,24 @@
 # features/insights/store.py
 from __future__ import annotations
 
-import hashlib
 import os
+import json
+import hashlib
+from hashlib import sha256
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
 import requests
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+
+# =========================
+# Config knobs (fast tweaks)
+# =========================
+# Default number of IVF lists to probe in ANN search; higher = more accurate, slower
+DEFAULT_IVF_PROBES = int(os.getenv("RAG_IVFFLAT_PROBES", "10"))
+# Optional: set per-query statement timeout (ms) during retrieval; 0 disables
+RETRIEVAL_STATEMENT_TIMEOUT_MS = int(os.getenv("RAG_RETRIEVAL_STMT_TIMEOUT_MS", "0"))
 
 
 # ---------- Dataclass for cached insights ----------
@@ -49,6 +59,65 @@ CREATE INDEX IF NOT EXISTS idx_ci_company ON rag.company_insights (company_name)
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_source_hash ON rag.company_insights (source_hash);
 """
 
+# ---------- KPI persona cache (company + persona_key) ----------
+
+DDL_KPI_CACHE = """
+CREATE TABLE IF NOT EXISTS rag.persona_kpi_cache (
+  id             BIGSERIAL PRIMARY KEY,
+  company_name   TEXT NOT NULL,
+  persona_key    TEXT NOT NULL,      -- sha256 of normalized persona fields
+  persona_blob   JSONB,              -- raw persona fields for debugging
+  k_used         INT,
+  kpis_json      JSONB NOT NULL,     -- already adapted to UI schema
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kpi_cache_key ON rag.persona_kpi_cache (company_name, persona_key);
+"""
+
+def ensure_kpi_cache(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(text(DDL_KPI_CACHE))
+
+def _persona_key(company: str, persona_info: Dict[str, Any]) -> str:
+    s = "|".join([
+        company.strip().lower(),
+        (persona_info.get("title","") or "").strip().lower(),
+        (persona_info.get("working_group","") or "").strip().lower(),
+        (persona_info.get("business_unit","") or "").strip().lower(),
+        (persona_info.get("service_line","") or "").strip().lower(),
+        (persona_info.get("manager_title","") or "").strip().lower(),
+        (persona_info.get("subsidiary","") or "").strip().lower(),
+        (persona_info.get("region_or_location","") or "").strip().lower(),
+    ])
+    return sha256(s.encode("utf-8")).hexdigest()
+
+def get_cached_kpis(engine: Engine, company: str, persona_key: str) -> Optional[Dict[str,Any]]:
+    ensure_kpi_cache(engine)
+    sql = text("""
+      SELECT kpis_json, k_used
+      FROM rag.persona_kpi_cache
+      WHERE company_name=:c AND persona_key=:pk
+      ORDER BY created_at DESC
+      LIMIT 1
+    """)
+    with engine.begin() as conn:
+        row = conn.execute(sql, {"c": company, "pk": persona_key}).mappings().first()
+        return {"kpis_json": row["kpis_json"], "k_used": row.get("k_used")} if row else None
+
+def upsert_kpis(engine: Engine, company: str, persona_key: str, persona_blob: Dict[str,Any],
+                kpis_json: Dict[str,Any], k_used: int) -> None:
+    ensure_kpi_cache(engine)
+    sql = text("""
+      INSERT INTO rag.persona_kpi_cache (company_name, persona_key, persona_blob, kpis_json, k_used)
+      VALUES (:c, :pk, CAST(:pb AS JSONB), CAST(:kj AS JSONB), :k)
+      ON CONFLICT (company_name, persona_key) DO UPDATE SET
+        persona_blob = EXCLUDED.persona_blob,
+        kpis_json    = EXCLUDED.kpis_json,
+        k_used       = EXCLUDED.k_used
+    """)
+    with engine.begin() as conn:
+        conn.execute(sql, {"c": company, "pk": persona_key,
+                           "pb": json.dumps(persona_blob), "kj": json.dumps(kpis_json), "k": int(k_used)})
 
 def ensure_company_insights_table(engine: Engine) -> None:
     with engine.begin() as conn:
@@ -59,7 +128,6 @@ def ensure_company_insights_table(engine: Engine) -> None:
 
 def _norm(s: Optional[str]) -> str:
     return (s or "").strip()
-
 
 def compute_source_hash(company: str, pdf_url: str) -> str:
     """
@@ -217,10 +285,7 @@ def _embed_query_azure(query_text: str) -> List[float]:
 
 
 def _vector_literal(v: List[float]) -> str:
-    """
-    Render a pgvector literal like: [0.12, 0.34, ...]
-    """
-    # Shorten floats a bit to keep SQL short
+    """Render a pgvector literal like: [0.12, 0.34, ...]"""
     return "[" + ",".join(f"{x:.6f}" for x in v) + "]"
 
 
@@ -229,9 +294,10 @@ def retrieve_top_k_chunks(
     *,
     document_id: int,
     query_text: Optional[str] = None,
-    query: Optional[str] = None,          # <- accept the alias used by caller
-    top_k: int = 12,
-    distance_metric: str = "cosine",      # <- new: choose pgvector operator
+    query: Optional[str] = None,          # alias used by caller
+    top_k: int = 6,
+    distance_metric: str = "cosine",      # choose pgvector operator
+    ivf_probes: Optional[int] = None,     # <-- NEW: override probes per-call
 ) -> List[Dict[str, Any]]:
     """
     Embed the query via Azure, then run a pgvector similarity search over rag.chunks
@@ -253,14 +319,13 @@ def retrieve_top_k_chunks(
     elif dm in ("inner", "ip", "inner_product", "max_inner_product"):
         op = "<#>"
     else:
-        # fallback safely to cosine
-        op = "<=>"
+        op = "<=>"  # safe fallback
 
     # 1) Embed the query
     q_emb = _embed_query_azure(qtext)
-    vec_sql = _vector_literal(q_emb)  # e.g. "[0.12,0.34,...]"
+    vec_sql = _vector_literal(q_emb)
 
-    # use bind for the vector literal; operator must be inlined token (not a bind)
+    # 2) Build SELECT with ANN operator
     dim = int(os.getenv("RAG_EMBED_DIM", "1536"))
     sql = text(f"""
         SELECT id AS chunk_id,
@@ -273,7 +338,14 @@ def retrieve_top_k_chunks(
         LIMIT :k
     """)
 
+    probes = int(ivf_probes if ivf_probes is not None else DEFAULT_IVF_PROBES)
+    stmt_timeout = RETRIEVAL_STATEMENT_TIMEOUT_MS
+
     with engine.begin() as conn:
+        # Speed up ANN by probing more lists (local to this tx)
+        conn.execute(text("SET LOCAL ivfflat.probes = :p"), {"p": probes})
+        if stmt_timeout > 0:
+            conn.execute(text("SET LOCAL statement_timeout = :t"), {"t": stmt_timeout})
         rows = conn.execute(sql, {
             "doc": int(document_id),
             "k": int(top_k),

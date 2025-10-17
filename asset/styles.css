@@ -57,7 +57,7 @@
   background: #fff;
   color: #213547;
   transition: border-color .2s ease, box-shadow .2s ease;
-  border: 1px solid #dcdfe4;
+  border: 0px solid #dcdfe4;
 }
 .stTextInput > div > div > input:focus,
 .stPassword > div > div > input:focus {
@@ -94,14 +94,51 @@ label[data-testid="stWidgetLabel"] > div > p {
   transform: translateY(-1px);
   box-shadow: 0 8px 16px rgba(0,0,0,0.12);
 }
-/* Special class for right-aligned buttons */
-div[data-testid="stButton"][key="get_insights_btn"] {
-  display: flex;
-  justify-content: flex-end;
+
+/* ---------- Buttons (updated for “Edit tables” look) ---------- */
+.stButton > button,
+.stDownloadButton > button,
+.stForm .stButton > button {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+  font-size: 14px;
+  background: #f1f5ff;           /* soft blue background */
+  color: #1f2a44;                /* dark navy text */
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.25s ease;    /* smooth color + shadow */
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
 }
-.stButton > button {
-  width: auto !important; /* override 100% width */
+
+.stButton > button:hover,
+.stDownloadButton > button:hover,
+.stForm .stButton > button:hover {
+  background: #2563eb;           /* deep blue hover */
+  color: #ffffff;                /* white text */
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
 }
+
+
+/* optional: make embedded <img> icons invert to white on hover */
+.stButton > button img,
+.stDownloadButton > button img {
+  width: 18px;
+  height: 18px;
+  transition: filter 0.25s ease;
+}
+
+.stButton > button:hover img,
+.stDownloadButton > button:hover img {
+  filter: brightness(0) invert(1);
+}
+
 /* Actions row wrapper to keep buttons aligned */
 .auth-actions { margin-top: .5rem; }
 .auth-actions .stButton > button { width: 100%; }

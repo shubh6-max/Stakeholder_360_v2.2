@@ -186,7 +186,7 @@ def kpis_chain(llm: Optional[AzureChatOpenAI] = None):
         [
             (
                 "system",
-                "You are a precise KPI planner. Propose exactly TWO KPIs tailored to the persona and company. "
+                "You are a  senior sales development representative and precise KPI planner. Propose exactly TWO KPIs tailored to the persona and company. "
                 "Use ONLY the supplied context. If unsure, be conservative.",
             ),
             (

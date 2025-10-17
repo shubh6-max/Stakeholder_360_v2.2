@@ -10,7 +10,12 @@ from utils.db import get_engine
 from utils.rag_db import ensure_rag_schema
 from .fetch_annual import fetch_or_load_annual_report, AnnualFetchResult
 from .chunk_embed_langchain import chunk_and_embed_document
-from .store import retrieve_top_k_chunks
+from .store import (
+    retrieve_top_k_chunks,
+    get_cached_kpis,
+    upsert_kpis,
+    _persona_key as persona_key,   # reuse the same hashing logic as store.py
+)
 from .chains import generate_top_kpis
 
 
@@ -63,7 +68,7 @@ def ensure_company_indexed(engine, company: str) -> Optional[int]:
     if not company:
         return None
 
-    # ✅ Make sure schema & tables/extensions exist BEFORE any SELECTs
+    # ✅ Ensure schema & extensions exist BEFORE any SELECTs
     ensure_rag_schema(engine)
 
     # 1) See if we already have a doc with chunks
@@ -76,7 +81,7 @@ def ensure_company_indexed(engine, company: str) -> Optional[int]:
         if _get_chunk_count_for_document(engine, doc_id) > 0:
             return doc_id
 
-    # 2) DB-first fetch/load of annual report (creates rag.sources + rag.documents if missing)
+    # 2) DB-first fetch/load of annual report (creates rag.company_sources + rag.documents if missing)
     fetch_res: AnnualFetchResult = fetch_or_load_annual_report(engine, company)
 
     if fetch_res.status == "absent":
@@ -93,7 +98,7 @@ def ensure_company_indexed(engine, company: str) -> Optional[int]:
 
 
 # -----------------------------
-# Persona → retrieval → KPI generation
+# Persona helpers
 # -----------------------------
 
 def _persona_summary_from_row(row: Dict[str, Any] | Any) -> Tuple[str, Dict[str, Any]]:
@@ -114,12 +119,15 @@ def _persona_summary_from_row(row: Dict[str, Any] | Any) -> Tuple[str, Dict[str,
         "subsidiary": _get("subsidiary", ""),
         "region_or_location": _get("location", ""),
         "email": _get("email_address", ""),
+        # NEW: include manager title to specialize KPIs
+        "manager_title": _get("reporting_manager_designation", ""),
     }
     return persona_name or "Unknown Persona", info
 
+
 def _adapt_for_ui(parsed: Dict[str, Any], *, company: str, persona_name: str,
                   row: Dict[str, Any], k_used: int) -> Dict[str, Any]:
-    """Map KPIResponse -> UI schema expected by components.kpi_view."""
+    """Map KPIResponse -> UI schema expected by components.kpi_view (top 2)."""
     out = {
         "company": company,
         "persona_name": persona_name,
@@ -134,28 +142,30 @@ def _adapt_for_ui(parsed: Dict[str, Any], *, company: str, persona_name: str,
         title = (k.get("name") or "").strip()
         why = (k.get("why") or "").strip()
         owner = (k.get("suggested_owner_function") or "").strip()
-        evidence = " • ".join([e for e in (k.get("backing_evidence") or []) if e.strip()])[:500]
+        evidence = " • ".join([e for e in (k.get("backing_evidence") or []) if isinstance(e, str) and e.strip()])[:500]
 
         out["kpis"].append({
             "title": title or "Untitled KPI",
             "why_it_matters": why or (f"Relevant for {owner}" if owner else "—"),
-            # keep simple, concise “measure” from evidence/owner; you can improve this prompt-side later
             "how_to_measure": evidence or (f"Measured by {owner}" if owner else "—"),
-            # leave initiatives empty for now (or map from evidence if you prefer)
             "suggested_initiatives": [],
-            # optional: include sources later if you want to show snippets
             "sources": [],
         })
     return out
 
 
-def run_kpis_for_persona(company: str, persona_row: Dict[str, Any] | Any, *, top_k: int = 8) -> Dict[str, Any]:
+# -----------------------------
+# Persona → retrieval → KPI generation (with cache)
+# -----------------------------
+
+def run_kpis_for_persona(company: str, persona_row: Dict[str, Any] | Any, *, top_k: int = 6) -> Dict[str, Any]:
     """
-    End-to-end:
-      - Ensure the company's annual report is indexed (auto fetch & embed if needed)
-      - Retrieve top-K relevant chunks for KPI query
-      - Generate exactly two KPIs tailored to the persona
-    Returns a dict (parsed KPIResponse) with keys: company, persona, kpis[...]
+    Flow:
+      0) Build persona key and check cache → return if hit
+      1) Ensure company's annual report is indexed (fetch + embed only once)
+      2) Retrieve top-K relevant chunks for KPI query (fast IVFFLAT)
+      3) Generate exactly two KPIs tailored to the persona
+      4) Adapt to UI schema and persist to persona cache → return
     """
     company = (company or "").strip()
     if not company:
@@ -163,23 +173,34 @@ def run_kpis_for_persona(company: str, persona_row: Dict[str, Any] | Any, *, top
 
     engine = get_engine()
 
+    # Persona key + cache check (FAST PATH)
+    persona_name, persona_info = _persona_summary_from_row(persona_row)
+    pkey = persona_key(company, persona_info)
+    with st.spinner("Building KPI context from the latest annual report…"):
+        cached = get_cached_kpis(engine, company, pkey)
+    if cached and cached.get("kpis_json"):
+        # Already adapted to UI schema in cache; return as-is
+        payload = cached["kpis_json"]
+        # keep k_used if present (handy to show in UI)
+        if cached.get("k_used") is not None:
+            payload["k_used"] = cached["k_used"]
+        return payload
+
     # 🔑 Ensure we have indexed content (will fetch/embed if missing)
     with st.spinner(f"Ensuring index for {company}…"):
         document_id = ensure_company_indexed(engine, company)
-
     if not document_id:
         raise RuntimeError(
             f"No indexed content found for company '{company}'. "
             f"Could not fetch or embed an annual report."
         )
 
-    persona_name, persona_info = _persona_summary_from_row(persona_row)
-
     retrieval_query = (
         "From the company's annual report, surface business priorities, risks, operational challenges, "
         "functions involved and regional focus areas, suitable to derive KPIs for a stakeholder."
     )
 
+    # Retrieval (fast ANN; probes set inside retrieve_top_k_chunks)
     with st.spinner(f"Retrieving context for KPI selection (top-{top_k})…"):
         matches: List[Any] = retrieve_top_k_chunks(
             engine=engine,
@@ -187,6 +208,7 @@ def run_kpis_for_persona(company: str, persona_row: Dict[str, Any] | Any, *, top
             query=retrieval_query,
             top_k=top_k,
             distance_metric="cosine",
+            # ivf_probes: use default from store.py unless you want to override per-call
         )
 
     if not matches:
@@ -200,6 +222,7 @@ def run_kpis_for_persona(company: str, persona_row: Dict[str, Any] | Any, *, top
             snippets.append(str(m))
     digest = "\n\n".join(snippets)
 
+    # LLM (prompt will only return 2 KPIs)
     with st.spinner("Generating top KPIs…"):
         parsed, _raw = generate_top_kpis(
             company=company,
@@ -208,11 +231,22 @@ def run_kpis_for_persona(company: str, persona_row: Dict[str, Any] | Any, *, top
             context=digest,
         )
 
-    # 🔁 adapt to the renderer’s schema (top 2 only)
+    # Adapt to your renderer schema (keep top-2)
     ui_payload = _adapt_for_ui(parsed, company=company, persona_name=persona_name,
                                row=persona_row, k_used=top_k)
 
+    # Persist in cache so future requests (same persona/company) are instant
+    try:
+        upsert_kpis(
+            engine,
+            company=company,
+            persona_key=pkey,
+            persona_blob={"name": persona_name, **persona_info},
+            kpis_json=ui_payload,
+            k_used=top_k,
+        )
+    except Exception:
+        # Non-fatal: cache miss is OK if DB perms constrain writes
+        pass
+
     return ui_payload
-
-# -----------------------------------------------------------------------------
-

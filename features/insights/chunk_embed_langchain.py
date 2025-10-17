@@ -60,7 +60,7 @@ def _make_embedder() -> AzureOpenAIEmbeddings:
         api_key=_AZURE_API_KEY,
         azure_deployment=_AZURE_EMBED_DEPLOYMENT,
         openai_api_version=_AZURE_EMBED_VERSION,
-        chunk_size=64,  # batch size for embed_documents
+        chunk_size=128,  # batch size for embed_documents
     )
 
 
