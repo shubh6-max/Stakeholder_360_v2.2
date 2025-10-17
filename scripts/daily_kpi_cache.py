@@ -64,7 +64,7 @@ from features.insights.retrieve import run_kpis_for_persona
 # Tunables (override via env)
 # =========================
 BATCH_SIZE        = int(os.getenv("KPI_BATCH_SIZE", "250"))
-CACHE_TTL_D       = int(os.getenv("KPI_CACHE_TTL_DAYS", "14"))
+CACHE_TTL_D       = int(os.getenv("KPI_CACHE_TTL_DAYS", "90"))
 MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # conservative for S0
 RETRIES           = int(os.getenv("KPI_RETRIES", "2"))
 BASE_BACKOFF      = float(os.getenv("KPI_BACKOFF_SECS", "1.2"))
