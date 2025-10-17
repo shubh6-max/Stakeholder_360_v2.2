@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import deque
 from sqlalchemy import text, bindparam
 from sqlalchemy.engine import Engine
-
+import sys
 try:
     from psycopg2.errors import DeadlockDetected
 except Exception:
