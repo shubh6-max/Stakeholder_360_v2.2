@@ -2,8 +2,8 @@ name: Daily KPI Cache
 
 on:
   schedule:
-    # 11:00 AM IST = 05:30 UTC
-    - cron: "30 5 * * *"
+    # 11:00 PM IST = 17:30 UTC
+    - cron: "30 17 * * *"
   workflow_dispatch: {}   # allow manual runs
 
 permissions:
@@ -22,27 +22,26 @@ jobs:
       PYTHONUNBUFFERED: "1"
 
       # ---- Script tunables ----
-      KPI_BATCH_SIZE: "600"        # start higher; adjust after first run
+      KPI_BATCH_SIZE: "600"        # adjust after observing runtime
       KPI_CACHE_TTL_DAYS: "14"
-      KPI_MAX_WORKERS: "4"         # Stage 1
+      KPI_MAX_WORKERS: "4"         # Stage 1 (raise after a clean run)
       KPI_RETRIES: "4"
       KPI_BACKOFF_SECS: "1.2"
-      KPI_EMBED_RPM: "1200"        # Stage 1 (under your 5.9k RPM)
+      KPI_EMBED_RPM: "1200"
       KPI_THROTTLE_SECS: "0.05"
 
-      # ---- DB / Azure ----
+      # ---- DB / Azure (from repo/org secrets) ----
       PGHOST: ${{ secrets.PGHOST }}
       PGDATABASE: ${{ secrets.PGDATABASE }}
       PGUSER: ${{ secrets.PGUSER }}
       PGPASSWORD: ${{ secrets.PGPASSWORD }}
-      PGPORT: ${{ secrets.PGPORT }}
+      PGPORT: ${{ secrets.PGPORT }} # may be empty; code & verify step default to 5432
 
       AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
       AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
       AZURE_API_VERSION: ${{ secrets.AZURE_API_VERSION }}
       AZURE_EMBED_DEPLOYMENT: ${{ secrets.AZURE_EMBED_DEPLOYMENT }}
       AZURE_EMBED_VERSION: ${{ secrets.AZURE_EMBED_VERSION }}
-
 
     steps:
       - name: Checkout
@@ -52,7 +51,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
+
+      # ✅ Cache pip dependencies between runs
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install dependencies
         run: |
@@ -63,17 +70,28 @@ jobs:
             pip install sqlalchemy psycopg2-binary
           fi
 
-      - name: Verify DB connection (fail fast)
+      # (Optional) quick peek at requirements to catch formatting issues
+      # - name: Show first 50 lines of requirements (debug)
+      #   if: always()
+      #   run: |
+      #     nl -ba requirements.txt | sed -n '1,50p'
+
+      - name: Verify DB connection (fail fast, safe 5432 default)
         run: |
           python - <<'PY'
-          import os, psycopg2
-          conn = psycopg2.connect(
-            host=os.environ["PGHOST"],
-            dbname=os.environ["PGDATABASE"],
-            user=os.environ["PGUSER"],
-            password=os.environ["PGPASSWORD"],
-            port=int(os.environ.get("PGPORT","5432")),
-          )
+          import os, psycopg2, sys
+          def req(name):
+            v = os.environ.get(name)
+            if v is None or str(v).strip() == "":
+              print(f"Missing or empty required env: {name}", file=sys.stderr)
+              sys.exit(1)
+            return v
+          host = req("PGHOST")
+          db   = req("PGDATABASE")
+          user = req("PGUSER")
+          pw   = req("PGPASSWORD")
+          port = int((os.environ.get("PGPORT") or "5432").strip())
+          conn = psycopg2.connect(host=host, dbname=db, user=user, password=pw, port=port)
           with conn.cursor() as cur:
             cur.execute("SELECT 1;")
             print("DB OK:", cur.fetchone())
@@ -86,11 +104,11 @@ jobs:
           for i in 1 2; do
             echo "Attempt $i..."
             if python -m scripts.daily_kpi_cache; then
-              echo "Success on attempt $i"
+              echo "✅ Success on attempt $i"
               break
             fi
             if [ "$i" = "2" ]; then
-              echo "Failed after 2 attempts"; exit 1
+              echo "❌ Failed after 2 attempts"; exit 1
             fi
             echo "Retrying in 45s..."; sleep 45
           done
