@@ -22,13 +22,13 @@ jobs:
       PYTHONUNBUFFERED: "1"
 
       # ---- Script tunables ----
-      KPI_BATCH_SIZE: "100"
+      KPI_BATCH_SIZE: "600"        # start higher; adjust after first run
       KPI_CACHE_TTL_DAYS: "14"
-      KPI_MAX_WORKERS: "1"
+      KPI_MAX_WORKERS: "4"         # Stage 1
       KPI_RETRIES: "4"
       KPI_BACKOFF_SECS: "1.2"
-      KPI_EMBED_RPM: "40"
-      KPI_THROTTLE_SECS: "0.25"
+      KPI_EMBED_RPM: "1200"        # Stage 1 (under your 5.9k RPM)
+      KPI_THROTTLE_SECS: "0.05"
 
       # ---- DB / Azure ----
       PGHOST: ${{ secrets.PGHOST }}
@@ -42,6 +42,7 @@ jobs:
       AZURE_API_VERSION: ${{ secrets.AZURE_API_VERSION }}
       AZURE_EMBED_DEPLOYMENT: ${{ secrets.AZURE_EMBED_DEPLOYMENT }}
       AZURE_EMBED_VERSION: ${{ secrets.AZURE_EMBED_VERSION }}
+
 
     steps:
       - name: Checkout
