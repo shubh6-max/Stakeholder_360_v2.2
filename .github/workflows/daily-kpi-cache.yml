@@ -30,15 +30,20 @@ jobs:
       KPI_EMBED_RPM: "1200"
       KPI_THROTTLE_SECS: "0.05"
 
+      # ---- RAG / embeddings ----
+      RAG_AUTO_MIGRATE: "1"              # <— allow schema fix
+      RAG_EMBED_DIM: "1536"              # <— matches text-embedding-3-small
+      RAG_EMBED_MODEL: "text-embedding-3-small"
+
       # ---- DB / SSL ----
       PGHOST: ${{ secrets.PGHOST }}
       PGDATABASE: ${{ secrets.PGDATABASE }}
       PGUSER: ${{ secrets.PGUSER }}
       PGPASSWORD: ${{ secrets.PGPASSWORD }}
-      PGPORT: ${{ secrets.PGPORT }}   # may be empty; we default to 5432
-      PGSSLMODE: "require"            # enforce SSL to Azure Postgres
+      PGPORT: ${{ secrets.PGPORT }}
+      PGSSLMODE: "require"
 
-      # (Optional) single DSN, if you prefer:
+      # (Optional) single DSN if you prefer
       # PG_DSN: ${{ secrets.PG_DSN }}
 
       # ---- Azure OpenAI ----
@@ -74,91 +79,49 @@ jobs:
             pip install sqlalchemy psycopg2-binary
           fi
 
-      # Preflight: show exactly what's missing if DB secrets aren’t set
       - name: Preflight secrets check
         run: |
           python - <<'PY'
           import os, sys
           dsn = (os.environ.get("PG_DSN") or "").strip()
           if dsn:
-            print("Using PG_DSN")
-            sys.exit(0)
+            print("Using PG_DSN"); sys.exit(0)
           required = ["PGHOST","PGDATABASE","PGUSER","PGPASSWORD"]
           missing = [k for k in required if not (os.environ.get(k) or "").strip()]
           if missing:
-            print("❌ Missing DB secrets. Provide either:", file=sys.stderr)
-            print("  - PG_DSN (recommended), e.g. postgresql+psycopg2://user:pass@host:5432/db?sslmode=require", file=sys.stderr)
-            print("    OR", file=sys.stderr)
-            print("  - PGHOST, PGDATABASE, PGUSER, PGPASSWORD (PGPORT optional; SSL is enforced)", file=sys.stderr)
-            print("Missing:", ", ".join(missing), file=sys.stderr)
-            sys.exit(1)
+            print("❌ Missing DB secrets. Provide PG_DSN or individual PG* vars.", file=sys.stderr)
+            print("Missing:", ", ".join(missing), file=sys.stderr); sys.exit(1)
           print("Using individual PG* vars")
           PY
 
-      # Verify DB: use SSL; try Flexible user ('mathcoadmin') first, then Single-server style ('mathcoadmin@psql-scout')
       - name: Verify DB connection
         run: |
           python - <<'PY'
-          import os, sys
-          import psycopg2
-          import urllib.parse as up
-
+          import os, sys, psycopg2
           dsn = (os.environ.get("PG_DSN") or "").strip()
           sslmode = (os.environ.get("PGSSLMODE") or "require").strip()
-
           if dsn:
-            # Ensure sslmode=require is present in DSN if not specified
-            if "sslmode=" not in dsn:
-              sep = "&" if "?" in dsn else "?"
-              dsn = f"{dsn}{sep}sslmode={sslmode}"
-            try:
-              conn = psycopg2.connect(dsn)
-              with conn.cursor() as cur:
-                cur.execute("SELECT 1;"); print("DB OK via DSN:", cur.fetchone())
-              conn.close()
-              sys.exit(0)
-            except Exception as e:
-              print("❌ DSN connection failed:", e, file=sys.stderr)
-              sys.exit(1)
-
-          def env(name, default=None, required=False):
+            if "sslmode=" not in dsn: dsn += ("&" if "?" in dsn else "?") + f"sslmode={sslmode}"
+            conn = psycopg2.connect(dsn)
+            with conn.cursor() as c: c.execute("SELECT 1;"); print("DB OK via DSN:", c.fetchone())
+            conn.close(); sys.exit(0)
+          def env(name, req=False, default=None):
             v = os.environ.get(name)
-            if v is None or str(v).strip()=="":
-              if required:
-                print(f"Missing or empty env: {name}", file=sys.stderr); sys.exit(1)
-              return default
-            return v.strip()
-
-          host = env("PGHOST", required=True)
-          db   = env("PGDATABASE", required=True)
-          user = env("PGUSER", required=True)
-          pw   = env("PGPASSWORD", required=True)
-          port = int((env("PGPORT") or "5432"))
-
-          def try_conn(u):
+            if req and (v is None or v.strip()==""): print(f"Missing {name}", file=sys.stderr); sys.exit(1)
+            return (v or default or "").strip()
+          host = env("PGHOST", True); db = env("PGDATABASE", True); user = env("PGUSER", True); pw = env("PGPASSWORD", True)
+          port = int(env("PGPORT", False, "5432"))
+          def try_user(u):
             try:
               conn = psycopg2.connect(host=host, dbname=db, user=u, password=pw, port=port, sslmode=sslmode)
-              with conn.cursor() as cur:
-                cur.execute("SELECT 1;")
-                print(f"DB OK via user='{u}'")
-              conn.close()
-              return True
+              with conn.cursor() as c: c.execute("SELECT 1;"); print(f"DB OK via user='{u}'")
+              conn.close(); return True
             except Exception as e:
-              print(f"Attempt with user='{u}' failed: {e}", file=sys.stderr)
-              return False
-
-          # Try as-is (Flexible Server style)
-          if try_conn(user):
-            sys.exit(0)
-
-          # Try Single Server suffix user@servername
-          server_prefix = host.split(".")[0] if "." in host else host
-          user2 = f"{user}@{server_prefix}"
-          if try_conn(user2):
-            sys.exit(0)
-
-          print("❌ Could not connect with either username style. Check credentials, firewall, and SSL.", file=sys.stderr)
-          sys.exit(1)
+              print(f"Attempt with user='{u}' failed: {e}", file=sys.stderr); return False
+          if try_user(user): sys.exit(0)
+          server = host.split(".")[0] if "." in host else host
+          if try_user(f"{user}@{server}"): sys.exit(0)
+          print("❌ Could not connect with either username style.", file=sys.stderr); sys.exit(1)
           PY
 
       - name: Run daily_kpi_cache (with simple retry)
@@ -167,8 +130,7 @@ jobs:
           for i in 1 2; do
             echo "Attempt $i..."
             if python -m scripts.daily_kpi_cache; then
-              echo "✅ Success on attempt $i"
-              break
+              echo "✅ Success on attempt $i"; break
             fi
             if [ "$i" = "2" ]; then
               echo "❌ Failed after 2 attempts"; exit 1
@@ -184,4 +146,3 @@ jobs:
           path: |
             **/logs/*.log
           if-no-files-found: ignore
-# =========================
