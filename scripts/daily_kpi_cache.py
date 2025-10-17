@@ -1,33 +1,87 @@
 # scripts/daily_kpi_cache.py
 from __future__ import annotations
-# ... (imports and the Streamlit shim exactly as in your working file) ...
 
+# =========================
+# Headless Streamlit shim
+# =========================
+import sys, types, logging
+def _install_streamlit_dummy_if_headless():
+    try:
+        import streamlit as _st
+        try:
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            if get_script_run_ctx() is not None:
+                return
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    dummy = types.ModuleType("streamlit")
+    class _DummyST:
+        def spinner(self, *_a, **_k):
+            class _CM:
+                def __enter__(self_s): return None
+                def __exit__(self_s, *exc): return False
+            return _CM()
+        def warning(self, *a, **k): pass
+        def error(self, *a, **k): pass
+        def write(self, *a, **k): pass
+        def info(self, *a, **k): pass
+        def success(self, *a, **k): pass
+
+    dummy.st = _DummyST()
+    dummy.spinner = dummy.st.spinner
+    dummy.warning = dummy.st.warning
+    dummy.error   = dummy.st.error
+    dummy.write   = dummy.st.write
+    dummy.info    = dummy.st.info
+    dummy.success = dummy.st.success
+    sys.modules["streamlit"] = dummy
+
+_install_streamlit_dummy_if_headless()
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(logging.ERROR)
+
+# =========================
+# Imports
+# =========================
 import os, time, random, threading
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import deque
+
 from sqlalchemy import text, bindparam
 from sqlalchemy.engine import Engine
-import sys
+
+# Deadlock-aware retries (optional import guard)
 try:
     from psycopg2.errors import DeadlockDetected
-except Exception:
-    class DeadlockDetected(Exception): ...
+except Exception:  # pragma: no cover
+    class DeadlockDetected(Exception):
+        pass
 
 from utils.db import get_engine
 from utils.rag_db import ensure_rag_schema
 from features.insights.store import ensure_kpi_cache, upsert_kpis, _persona_key
 from features.insights.retrieve import run_kpis_for_persona
 
-# ---------- Tunables ----------
-BATCH_SIZE   = int(os.getenv("KPI_BATCH_SIZE", "250"))
-CACHE_TTL_D  = int(os.getenv("KPI_CACHE_TTL_DAYS", "90"))
-MAX_WORKERS  = int(os.getenv("KPI_MAX_WORKERS", "1"))
-RETRIES      = int(os.getenv("KPI_RETRIES", "3"))
-BASE_BACKOFF = float(os.getenv("KPI_BACKOFF_SECS", "1.2"))
-EMBED_RPM    = int(os.getenv("KPI_EMBED_RPM", "40"))
-THROTTLE_SECS= float(os.getenv("KPI_THROTTLE_SECS", "0"))
+# =========================
+# Tunables (override via env)
+# =========================
+BATCH_SIZE        = int(os.getenv("KPI_BATCH_SIZE", "250"))
+CACHE_TTL_D       = int(os.getenv("KPI_CACHE_TTL_DAYS", "90"))
+MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # CI safe default
+RETRIES           = int(os.getenv("KPI_RETRIES", "3"))
+BASE_BACKOFF      = float(os.getenv("KPI_BACKOFF_SECS", "1.2"))
 
+# Rate limiting knobs (for Azure OpenAI embeddings)
+EMBED_RPM         = int(os.getenv("KPI_EMBED_RPM", "40"))      # requests/min across the process
+THROTTLE_SECS     = float(os.getenv("KPI_THROTTLE_SECS", "0")) # optional fixed delay per persona
+
+# =========================
+# Lightweight rate limiter
+# =========================
 # ---------- Rate limiter ----------
 class RateLimiter:
     def __init__(self, max_calls:int, window_secs:float=60.0):
@@ -76,45 +130,166 @@ def _is_dim_mismatch(err: Exception) -> bool:
     s=str(err)
     return ("has dim=" in s and "RAG_EMBED_DIM=" in s and "rag.chunks.embedding" in s)
 
-# ---------- SQL (same as your working file) ----------
-SELECT_CANDIDATES_SQL = """ ... (unchanged SQL from your last working file) ... """
 
-def select_candidates(engine: Engine, n:int) -> List[Dict[str,Any]]:
-    # (unchanged from your last working file)
-    ...
+# =========================
+# SQL: select candidates
+# =========================
+SELECT_CANDIDATES_SQL = """
+WITH src AS (
+  SELECT
+    COALESCE(NULLIF(TRIM(account), ''), '')                         AS company_name,
+    COALESCE(NULLIF(TRIM(subsidiary), ''), '')                      AS subsidiary,
+    COALESCE(NULLIF(TRIM(working_group), ''), '')                   AS working_group,
+    COALESCE(NULLIF(TRIM(business_unit), ''), '')                   AS business_unit,
+    COALESCE(NULLIF(TRIM(service_line), ''), '')                    AS service_line,
+    COALESCE(NULLIF(TRIM(client_name), ''), '')                     AS client_name,
+    COALESCE(NULLIF(TRIM(client_designation), ''), '')              AS client_designation,
+    COALESCE(NULLIF(TRIM(reporting_manager_designation), ''), '')   AS reporting_manager_designation,
+    COALESCE(NULLIF(TRIM(email_address), ''), '')                   AS email_address,
+    COALESCE(NULLIF(TRIM(location), ''), '')                        AS location,
+    COALESCE(NULLIF(TRIM(lead_priority), ''), 'Z')                  AS lead_priority,
 
-def build_persona_blob(row: Dict[str,Any]) -> Dict[str,Any]:
-    # (unchanged)
-    ...
+    -- Normalize last_update_date to timestamptz safely
+    CASE
+      WHEN last_update_date IS NULL THEN NULL
+      WHEN pg_typeof(last_update_date)::text = 'timestamp with time zone'
+        THEN last_update_date::timestamptz
+      WHEN pg_typeof(last_update_date)::text = 'timestamp without time zone'
+        THEN (last_update_date::timestamp)::timestamptz
+      WHEN pg_typeof(last_update_date)::text = 'date'
+        THEN (last_update_date::timestamp)::timestamptz
+      WHEN pg_typeof(last_update_date)::text = 'text'
+           AND last_update_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?$'
+        THEN (last_update_date::timestamp)::timestamptz
+      WHEN pg_typeof(last_update_date)::text = 'text'
+           AND last_update_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+        THEN to_timestamp(last_update_date, 'MM/DD/YYYY')::timestamptz
+      WHEN pg_typeof(last_update_date)::text = 'text'
+           AND last_update_date ~ '^[0-9]{2}-[0-9]{2}-[0-9]{4}$'
+        THEN to_timestamp(last_update_date, 'MM-DD-YYYY')::timestamptz
+      ELSE NULL
+    END AS last_update_at
+  FROM scout.centralize_db
+  WHERE COALESCE(NULLIF(TRIM(client_name), ''), '') <> ''
+    AND COALESCE(NULLIF(TRIM(account), ''), '') <> ''
+)
+SELECT *
+FROM src
+ORDER BY
+  lead_priority ASC,
+  COALESCE(last_update_at, NOW() - INTERVAL '10 years') DESC
+LIMIT :n;
+"""
 
-def persona_row_for_rag(row: Dict[str,Any]) -> Dict[str,Any]:
-    # (unchanged)
-    ...
-
-def filter_not_cached(engine: Engine, candidates: List[Dict[str,Any]], ttl_days:int) -> List[Dict[str,Any]]:
-    # (unchanged)
-    ...
-
-# ---------- Schema ensure with auto-fix (you already had this) ----------
-def ensure_schema_autofix(engine: Engine):
+def select_candidates(engine: Engine, n: int) -> List[Dict[str, Any]]:
     try:
-        ensure_rag_schema(engine)
-        return
-    except RuntimeError as e:
-        msg=str(e)
-        needs=("rag.chunks.embedding has dim=" in msg and "RAG_EMBED_DIM=" in msg)
-        if not needs: raise
-    prev=os.environ.get("RAG_AUTO_MIGRATE","")
-    try:
-        os.environ["RAG_AUTO_MIGRATE"]="1"
-        print("⚙️  Detected embedding dim mismatch; enabling auto-migration...")
-        ensure_rag_schema(engine)
-        print("✅ Auto-migration complete.")
-    finally:
-        if prev=="": os.environ.pop("RAG_AUTO_MIGRATE",None)
-        else: os.environ["RAG_AUTO_MIGRATE"]=prev
+        with engine.begin() as conn:
+            rows = conn.execute(text(SELECT_CANDIDATES_SQL), {"n": int(n)}).mappings().all()
+            return [dict(r) for r in rows]
+    except Exception:
+        pass
 
-# ---------- Worker with 429 + deadlock + DIM-MISMATCH self-heal ----------
+    # Fallback: simpler ordering
+    fallback_sql = """
+      WITH src AS (
+        SELECT
+          COALESCE(NULLIF(TRIM(account), ''), '')                         AS company_name,
+          COALESCE(NULLIF(TRIM(subsidiary), ''), '')                      AS subsidiary,
+          COALESCE(NULLIF(TRIM(working_group), ''), '')                   AS working_group,
+          COALESCE(NULLIF(TRIM(business_unit), ''), '')                   AS business_unit,
+          COALESCE(NULLIF(TRIM(service_line), ''), '')                    AS service_line,
+          COALESCE(NULLIF(TRIM(client_name), ''), '')                     AS client_name,
+          COALESCE(NULLIF(TRIM(client_designation), ''), '')              AS client_designation,
+          COALESCE(NULLIF(TRIM(reporting_manager_designation), ''), '')   AS reporting_manager_designation,
+          COALESCE(NULLIF(TRIM(email_address), ''), '')                   AS email_address,
+          COALESCE(NULLIF(TRIM(location), ''), '')                        AS location,
+          COALESCE(NULLIF(TRIM(lead_priority), ''), 'Z')                  AS lead_priority
+        FROM scout.centralize_db
+        WHERE COALESCE(NULLIF(TRIM(client_name), ''), '') <> ''
+          AND COALESCE(NULLIF(TRIM(account), ''), '') <> ''
+      )
+      SELECT *
+      FROM src
+      ORDER BY lead_priority ASC
+      LIMIT :n;
+    """
+    with engine.begin() as conn2:
+        rows = conn2.execute(text(fallback_sql), {"n": int(n)}).mappings().all()
+        return [dict(r) for r in rows]
+
+# =========================
+# Persona helpers
+# =========================
+def build_persona_blob(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "title": row.get("client_designation", ""),
+        "working_group": row.get("working_group", ""),
+        "business_unit": row.get("business_unit", ""),
+        "service_line": row.get("service_line", ""),
+        "manager_title": row.get("reporting_manager_designation", ""),
+        "subsidiary": row.get("subsidiary", ""),
+        "region_or_location": row.get("location", ""),
+        "email": row.get("email_address", ""),
+    }
+
+def persona_row_for_rag(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "client_name": row.get("client_name", ""),
+        "client_designation": row.get("client_designation", ""),
+        "working_group": row.get("working_group", ""),
+        "business_unit": row.get("business_unit", ""),
+        "service_line": row.get("service_line", ""),
+        "subsidiary": row.get("subsidiary", ""),
+        "location": row.get("location", ""),
+        "email_address": row.get("email_address", ""),
+        "reporting_manager_designation": row.get("reporting_manager_designation", ""),
+    }
+
+# =========================
+# Filter already cached within TTL
+# =========================
+def filter_not_cached(engine: Engine, candidates: List[Dict[str, Any]], ttl_days: int) -> List[Dict[str, Any]]:
+    enriched = []
+    for r in candidates:
+        company = (r.get("company_name") or "").strip()
+        if not company:
+            continue
+        pblob = build_persona_blob(r)
+        pkey = _persona_key(company, pblob)
+        enriched.append((r, company, pkey))
+
+    by_co: Dict[str, List[str]] = {}
+    for _r, co, pk in enriched:
+        by_co.setdefault(co, []).append(pk)
+
+    cached: Dict[Tuple[str, str], bool] = {}
+    with engine.begin() as conn:
+        for co, keys in by_co.items():
+            if not keys:
+                continue
+            unique_keys = list(set(keys))
+            sql = text("""
+              SELECT persona_key
+              FROM rag.persona_kpi_cache
+              WHERE company_name = :c
+                AND persona_key IN :keys
+                AND created_at >= NOW() - (:ttl * INTERVAL '1 day')
+            """).bindparams(bindparam("keys", expanding=True))
+            rows = conn.execute(sql, {"c": co, "keys": unique_keys, "ttl": int(ttl_days)}).fetchall()
+            hit = {row[0] for row in rows}
+            for k in unique_keys:
+                cached[(co, k)] = (k in hit)
+
+    out: List[Dict[str, Any]] = []
+    for r, co, pk in enriched:
+        if not cached.get((co, pk), False):
+            r["_persona_key"] = pk
+            out.append(r)
+    return out
+
+# =========================
+# Worker with 429 + deadlock handling
+# =========================
 def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,Optional[str]]:
     company=(row.get("company_name") or "").strip()
     name=(row.get("client_name") or "").strip()
@@ -167,7 +342,30 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,O
 
     return company,name,pk,False,"unknown error"
 
-# ---------- Main ----------
+# =========================
+# Schema ensure with auto-fix
+# =========================
+def ensure_schema_autofix(engine: Engine):
+    try:
+        ensure_rag_schema(engine)
+        return
+    except RuntimeError as e:
+        msg=str(e)
+        needs=("rag.chunks.embedding has dim=" in msg and "RAG_EMBED_DIM=" in msg)
+        if not needs: raise
+    prev=os.environ.get("RAG_AUTO_MIGRATE","")
+    try:
+        os.environ["RAG_AUTO_MIGRATE"]="1"
+        print("⚙️  Detected embedding dim mismatch; enabling auto-migration...")
+        ensure_rag_schema(engine)
+        print("✅ Auto-migration complete.")
+    finally:
+        if prev=="": os.environ.pop("RAG_AUTO_MIGRATE",None)
+        else: os.environ["RAG_AUTO_MIGRATE"]=prev
+
+# =========================
+# Main
+# =========================
 def main() -> int:
     eng=get_engine()
     ensure_schema_autofix(eng)     # upfront
