@@ -3,12 +3,7 @@
 </p>
 <p align="center"><h1 align="center">STAKEHOLDER 360</h1></p>
 <p align="center">
-	<em><code>❯ **Stakeholder 360 v2.2** is a full-stack, AI-assisted platform for **stakeholder analysis**, **KPI alignment**, and **RAG (Retrieval-Augmented Generation)** on company and persona documents.  
-It provides a modern, multi-page Streamlit UI, integrates **Azure OpenAI** for generation + embeddings, and uses **PostgreSQL** (with vector storage) for persistence.  
-Typical workflows include:
-- Curating stakeholders and personas, editing profiles, and visualizing org charts.
-- Ingesting annual reports / notes, chunk-embedding them, and running contextual Q&A.
-- Generating insight summaries and KPI mappings per stakeholder.</code></em>
+	<em><code>❯ REPLACE-ME</code></em>
 </p>
 <p align="center">
 	<img src="https://img.shields.io/github/license/shubh6-max/Stakeholder_360_v2.2?style=default&logo=opensourceinitiative&logoColor=white&color=0080ff" alt="license">
