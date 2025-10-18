@@ -73,7 +73,7 @@ from features.insights.retrieve import run_kpis_for_persona
 # =========================
 # Tunables (override via env)
 # =========================
-BATCH_SIZE        = int(os.getenv("KPI_BATCH_SIZE", "250"))
+BATCH_SIZE        = int(os.getenv("KPI_BATCH_SIZE", "1500"))
 CACHE_TTL_D       = int(os.getenv("KPI_CACHE_TTL_DAYS", "90"))
 MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # CI-safe default
 RETRIES           = int(os.getenv("KPI_RETRIES", "3"))
