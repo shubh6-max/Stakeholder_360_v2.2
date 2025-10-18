@@ -217,7 +217,7 @@ if not is_ready:
             <div style="text-align:center;opacity:.85">
                 <div style="font-size:42px;line-height:1.0;margin-bottom:6px;">🧭</div>
                 <div style="font-weight:700;font-size:18px;">Select stakeholder to proceed</div>
-                <div style="font-size:13px;">Choose an <b>Account</b> and a <b>Client Name</b> from the filters above.</div>
+                <div style="font-size:13px;">Select at least an <b>Account</b> and a <b>Client Name</b> from the filters above.</div>
             </div>
         </div>
         """,
@@ -246,7 +246,22 @@ with left:
     #     """,
     #     unsafe_allow_html=True
     # )
-    st.markdown(
+    # st.markdown(
+    #     f"""
+    #     <div style="
+    #       display:flex;justify-content:space-between;align-items:center;
+    #       background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+    #       padding:10px 12px;margin-bottom:10px;">
+    #       <div style="display:flex;align-items:center;gap:10px;">
+    #         <img src="https://img.icons8.com/?size=100&id=11269&format=png&color=000000" width="22" height="22" alt="info">
+    #         <div style="font-size:16px;font-weight:700;">Upward Org Chart</div>
+    #       </div>
+    #     </div>
+    #     """,
+    #     unsafe_allow_html=True,
+    # )
+    with st.container(border=True,height=630):
+        st.markdown(
         f"""
         <div style="
           display:flex;justify-content:space-between;align-items:center;
@@ -260,7 +275,6 @@ with left:
         """,
         unsafe_allow_html=True,
     )
-    with st.container(border=True,height=580):
         row = flt_f.iloc[0] if not flt_f.empty else None
 
         # --- Persist the selected stakeholder + sections snapshot into session ---
@@ -373,7 +387,22 @@ with right:
     #     """,
     #     unsafe_allow_html=True
     # )
-    st.markdown(
+    # st.markdown(
+    #     f"""
+    #     <div style="
+    #       display:flex;justify-content:space-between;align-items:center;
+    #       background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+    #       padding:10px 12px;margin-bottom:10px;">
+    #       <div style="display:flex;align-items:center;gap:10px;">
+    #         <img src="https://img.icons8.com/?size=100&id=Uj9DyJeLazL6&format=png&color=000000" width="22" height="22" alt="info">
+    #         <div style="font-size:16px;font-weight:700;">Linkedin details</div>
+    #       </div>
+    #     </div>
+    #     """,
+    #     unsafe_allow_html=True,
+    # )
+    with st.container(border=True, height=630):
+        st.markdown(
         f"""
         <div style="
           display:flex;justify-content:space-between;align-items:center;
@@ -387,7 +416,6 @@ with right:
         """,
         unsafe_allow_html=True,
     )
-    with st.container(border=True, height=580):
         if 'row' in locals() and row is not None:
             person_name = row.get("client_name", "")
             render_avatar_only(

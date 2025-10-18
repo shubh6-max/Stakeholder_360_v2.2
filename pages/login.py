@@ -136,8 +136,8 @@ elif do_login and not locked:
                     pass  # lock message already shown
                 else:
                     st.error("❌ Invalid email or password.")
-        except Exception:
-            st.error("Something went wrong while logging in. Please try again.")
+        except Exception as e:
+            st.error(f"Something went wrong while logging in. Please try again.{e}")
 
 
 # wrapper card end

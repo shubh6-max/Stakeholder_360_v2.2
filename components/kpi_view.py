@@ -152,8 +152,8 @@ def render_kpis(result: KPIResultLike) -> None:
         unsafe_allow_html=True,
     )
 
-    if k_used:
-        _badge(f"retrieval K = {int(k_used)}")
+    # if k_used:
+    #     _badge(f"retrieval K = {int(k_used)}")
 
     # KPI cards
     kpis = _kpis(result)
