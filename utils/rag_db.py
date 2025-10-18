@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 # -----------------------------------------------------------------------------
 # Config
 # -----------------------------------------------------------------------------
-EMBED_DIM = int(os.getenv("RAG_EMBED_DIM", "1532"))   # text-embedding-3-small → 1536
+EMBED_DIM = int(os.getenv("RAG_EMBED_DIM", "1536"))   # text-embedding-3-small → 1536
 IVFFLAT_LISTS = int(os.getenv("RAG_IVFFLAT_LISTS", "100"))
 
 # -----------------------------------------------------------------------------
