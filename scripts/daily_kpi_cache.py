@@ -44,9 +44,13 @@ logging.getLogger("streamlit").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(logging.ERROR)
 
 # =========================
-# Imports
+# Imports (+ force auto-migration for this process)
 # =========================
-import os, time, random, threading, traceback
+import os
+# ensure downstream ensure_rag_schema() (called from retrieve.py) can auto-migrate
+os.environ.setdefault("RAG_AUTO_MIGRATE", "1")
+
+import time, random, threading, traceback
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import deque
@@ -71,16 +75,13 @@ from features.insights.retrieve import run_kpis_for_persona
 # =========================
 BATCH_SIZE        = int(os.getenv("KPI_BATCH_SIZE", "250"))
 CACHE_TTL_D       = int(os.getenv("KPI_CACHE_TTL_DAYS", "90"))
-MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # keep 1 until stable
+MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # CI-safe default
 RETRIES           = int(os.getenv("KPI_RETRIES", "3"))
 BASE_BACKOFF      = float(os.getenv("KPI_BACKOFF_SECS", "1.2"))
 
 # Rate limiting knobs (for Azure OpenAI embeddings)
 EMBED_RPM         = int(os.getenv("KPI_EMBED_RPM", "40"))      # requests/min across the process
 THROTTLE_SECS     = float(os.getenv("KPI_THROTTLE_SECS", "0")) # optional fixed delay per persona
-
-# Optional per-request timeout (seconds) for upstream calls in retrieve layer
-KPI_REQUEST_TIMEOUT_SECS = float(os.getenv("KPI_REQUEST_TIMEOUT_SECS", "60"))
 
 # =========================
 # Lightweight rate limiter
@@ -100,6 +101,7 @@ class RateLimiter:
                 if sleep_for>0: time.sleep(sleep_for)
             self.events.append(time.time())
 
+from collections import deque
 _embed_rl = RateLimiter(EMBED_RPM, 60.0)
 
 def _is_azure_429(err: Exception) -> bool:
@@ -133,11 +135,6 @@ def _is_operation_canceled(err: Exception) -> bool:
             or "context cancelled" in s
             or "cancelled" in s
             or "timeout" in s)
-
-# NEW: detect vector-dimension mismatch token (only used during initial ensure)
-def _is_dim_mismatch(err: Exception) -> bool:
-    s=str(err)
-    return ("has dim=" in s and "RAG_EMBED_DIM=" in s and "rag.chunks.embedding" in s)
 
 # =========================
 # SQL: select candidates
@@ -296,123 +293,94 @@ def filter_not_cached(engine: Engine, candidates: List[Dict[str, Any]], ttl_days
     return out
 
 # =========================
-# Schema ensure with single-run auto-fix
+# Schema ensure with single-run latch
 # =========================
 _SCHEMA_OK = False
-
 def ensure_schema_autofix(engine: Engine):
-    """Run ensure_rag_schema once per process; auto-migrate only if needed."""
+    """Run ensure_rag_schema once per process; leave RAG_AUTO_MIGRATE=1 set."""
     global _SCHEMA_OK
     if _SCHEMA_OK:
         return
-    try:
-        ensure_rag_schema(engine)
-        _SCHEMA_OK = True
-        return
-    except RuntimeError as e:
-        msg = str(e)
-        needs = ("rag.chunks.embedding has dim=" in msg and "RAG_EMBED_DIM=" in msg)
-        if not needs:
-            raise
-    prev = os.environ.get("RAG_AUTO_MIGRATE", "")
-    try:
-        os.environ["RAG_AUTO_MIGRATE"] = "1"
-        print("⚙️  Detected embedding dim mismatch; enabling auto-migration...")
-        ensure_rag_schema(engine)
-        print("✅ Auto-migration complete.")
-        _SCHEMA_OK = True
-    finally:
-        if prev == "":
-            os.environ.pop("RAG_AUTO_MIGRATE", None)
-        else:
-            os.environ["RAG_AUTO_MIGRATE"] = prev
+    # keep auto-migration enabled for any downstream ensure_rag_schema() calls
+    os.environ["RAG_AUTO_MIGRATE"] = "1"
+    ensure_rag_schema(engine)
+    _SCHEMA_OK = True
 
 # =========================
-# Worker with 429/timeout handling
+# Worker with 429/timeout handling (no schema ops here)
 # =========================
 def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,Optional[str]]:
-    company = (row.get("company_name") or "").strip()
-    name    = (row.get("client_name")   or "").strip()
-    if not company:
-        return company, name, "", False, "company is required"
+    company=(row.get("company_name") or "").strip()
+    name=(row.get("client_name") or "").strip()
+    if not company: return company,name,"",False,"company is required"
 
-    persona_blob = build_persona_blob(row)
-    pk          = row.get("_persona_key") or _persona_key(company, persona_blob)
-    persona_rag = persona_row_for_rag(row)
+    persona_blob=build_persona_blob(row)
+    pk=row.get("_persona_key") or _persona_key(company, persona_blob)
+    persona_rag=persona_row_for_rag(row)
 
-    if THROTTLE_SECS > 0:
-        time.sleep(THROTTLE_SECS)
+    if THROTTLE_SECS>0: time.sleep(THROTTLE_SECS)
 
-    backoff = BASE_BACKOFF
-    for attempt in range(1, RETRIES + 1):
+    backoff=BASE_BACKOFF
+    for attempt in range(1, RETRIES+1):
         try:
-            _embed_rl.acquire()
+            _embed_rl.acquire()              # throttle before heavy path
 
-            # Try to pass timeout; fallback if not supported
-            try:
-                ui_payload = run_kpis_for_persona(
-                    company, persona_rag, top_k=8, timeout=KPI_REQUEST_TIMEOUT_SECS
-                )
-            except TypeError:
-                ui_payload = run_kpis_for_persona(company, persona_rag, top_k=8)
+            # IMPORTANT: run_kpis_for_persona has no 'timeout' kwarg
+            ui_payload=run_kpis_for_persona(company, persona_rag, top_k=8)
 
-            upsert_kpis(
-                engine,
-                company=company,
-                persona_key=pk,
-                persona_blob=persona_blob,
-                kpis_json=ui_payload,
-                k_used=int(ui_payload.get("k_used") or 8),
-            )
-            return company, name, pk, True, None
+            upsert_kpis(engine, company=company, persona_key=pk,
+                        persona_blob=persona_blob, kpis_json=ui_payload,
+                        k_used=int(ui_payload.get("k_used") or 8))
+            return company,name,pk,True,None
 
         except DeadlockDetected as e:
-            if attempt >= RETRIES:
-                return company, name, pk, False, f"deadlock: {e.__class__.__name__}: {e}"
-            delay = backoff * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
-            time.sleep(delay)
-            continue
+            if attempt>=RETRIES: return company,name,pk,False,f"deadlock: {e}"
+            delay=backoff*(2**(attempt-1))+random.uniform(0,0.3)
+            time.sleep(delay); continue
 
         except Exception as e:
-            # DO NOT migrate in the hot path; we do it once up front.
+            # Treat rate limits/cancellations as transient
             if _is_azure_429(e) or _is_operation_canceled(e):
-                wait = _retry_after_seconds_from(e) or max(30.0, backoff)
-                time.sleep(wait + random.uniform(0, 0.25))
-                backoff *= 2
-                if attempt >= RETRIES:
-                    tb = traceback.format_exc(limit=4)
-                    return company, name, pk, False, f"{e.__class__.__name__}: {e} | {tb}"
+                wait=_retry_after_seconds_from(e) or max(30.0, backoff)
+                time.sleep(wait+random.uniform(0,0.25))
+                backoff*=2
+                if attempt>=RETRIES:
+                    tb=traceback.format_exc(limit=4)
+                    return company,name,pk,False,f"{e.__class__.__name__}: {e} | {tb}"
                 continue
 
             if _is_soft_no_context(e):
-                return company, name, pk, True, "skipped: no context"
+                # success-but-skipped to avoid infinite retries on empty orgs
+                return company,name,pk,True,"skipped: no context"
 
-            tb = traceback.format_exc(limit=6)
-            if attempt >= RETRIES:
-                return company, name, pk, False, f"{e.__class__.__name__}: {e} | {tb}"
+            tb=traceback.format_exc(limit=6)
+            if attempt>=RETRIES:
+                return company,name,pk,False,f"{e.__class__.__name__}: {e} | {tb}"
+            time.sleep(backoff+random.uniform(0,0.25))
+            backoff*=2
 
-            time.sleep(backoff + random.uniform(0, 0.25))
-            backoff *= 2
-
-    return company, name, pk, False, "exhausted retries without success"
+    return company,name,pk,False,"exhausted retries without success"
 
 # =========================
 # Main
 # =========================
 def main() -> int:
-    eng = get_engine()
-    ensure_schema_autofix(eng)     # upfront, once
+    eng=get_engine()
+
+    # Force schema ensure/migration once, and keep RAG_AUTO_MIGRATE=1 for this process
+    ensure_schema_autofix(eng)
+
     ensure_kpi_cache(eng)
 
-    candidates = select_candidates(eng, n=BATCH_SIZE)
+    candidates=select_candidates(eng, n=BATCH_SIZE)
     if not candidates:
         print("No personas in centralize DB."); return 0
 
-    eligible = filter_not_cached(eng, candidates, ttl_days=CACHE_TTL_D)
+    eligible=filter_not_cached(eng, candidates, ttl_days=CACHE_TTL_D)
     if not eligible:
         print(f"No eligible personas (all cached within last {CACHE_TTL_D} days)."); return 0
 
-    eligible = eligible[:BATCH_SIZE]
+    eligible=eligible[:BATCH_SIZE]
     print(f"Selected {len(eligible)} personas (not cached in last {CACHE_TTL_D} days).")
 
     ok=fail=0
@@ -420,8 +388,7 @@ def main() -> int:
         for i,row in enumerate(eligible,1):
             c,n,pk,success,err=process_one(eng,row)
             if success:
-                msg="" if not err else f" — {err}"
-                ok+=1
+                ok+=1; msg="" if not err else f" — {err}"
                 print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}{msg}")
             else:
                 fail+=1
@@ -435,8 +402,7 @@ def main() -> int:
                 try:
                     c,n,pk,success,err=fut.result()
                     if success:
-                        msg="" if not err else f" — {err}"
-                        ok+=1
+                        ok+=1; msg="" if not err else f" — {err}"
                         print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}{msg}")
                     else:
                         fail+=1
@@ -445,7 +411,7 @@ def main() -> int:
                     fail+=1
                     company=(row.get("company_name") or "").strip()
                     name=(row.get("client_name") or "").strip()
-                    tb = traceback.format_exc(limit=6)
+                    tb=traceback.format_exc(limit=6)
                     print(f"[{i}/{len(eligible)}]  EXC :: {name} @ {company} — {e.__class__.__name__}: {e} | {tb}")
 
     print(f"Done. Success={ok}, Fail={fail}")
@@ -453,3 +419,4 @@ def main() -> int:
 
 if __name__=="__main__":
     sys.exit(main())
+# =========================
