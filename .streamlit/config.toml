@@ -3,8 +3,8 @@
 # ==========================
 
 [server]
-headless = false
-port = 8502
+headless = true
+port = 8501
 enableCORS = false                  # handled by reverse proxy / load balancer
 enableXsrfProtection = false         # ✅ CSRF security ON
 maxUploadSize = 200                 # allow large Excel/CSV uploads
