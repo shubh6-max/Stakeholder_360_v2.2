@@ -20,7 +20,7 @@ textColor = "#213547"               # modern slate grey
 font = "sans serif"                 # clean look
 
 [client]
-toolbarMode = "minimal"             # valid values: auto | minimal | viewer | developer
+toolbarMode = "developer"             # valid values: auto | minimal | viewer | developer
 showErrorDetails = true
 
 [runner]

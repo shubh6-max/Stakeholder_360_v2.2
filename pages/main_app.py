@@ -24,7 +24,7 @@ from components.kpi_view import render_kpis
 from features.insights.store import _persona_key as persona_key  # same hashing as DB cache
 from components.aggrid_sections_all import LEFT_SECTIONS, RIGHT_SECTIONS
 from components.kpi_view import render_kpis
-
+from features.insights.persona_kpi_runtime import render_persona_fn_kpi_block
 # ------------------------------------------------------------------------------
 # Page setup
 # ------------------------------------------------------------------------------
@@ -564,8 +564,9 @@ elif st.session_state.get("last_insights_key"):
         pass
 
 # ------------------------------------------------------------------------------
-end_time=time.time()
-# st.write(f"Execution time: {end_time-start_time} seconds")
+
+render_persona_fn_kpi_block()
+# ------------------------------------------------------------------------------
 st.divider()
 if st.button("Logout"):
     logout()
