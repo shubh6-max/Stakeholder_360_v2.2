@@ -124,6 +124,7 @@ def render_persona_kpi_preview(
 
     # Lay cards in streamlit columns (round-robin)
     columns = st.columns(max(1, card_cols))
+    # st.write(max(1, card_cols))
     for idx, b in enumerate(blocks):
         col = columns[idx % card_cols]
         with col:
