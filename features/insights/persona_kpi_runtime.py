@@ -372,9 +372,10 @@ def render_persona_fn_kpi_block():
                 data = _parse_llm_json(raw2)
 
             st.session_state["persona_fn_kpis_preview"] = data
+            num_columns_need=len(st.session_state["persona_fn_kpis_preview"])
             st.success("Generated persona functions & KPIs.")
             # Show cards: 3 across, KPIs in 2 columns within each card
-            render_persona_kpi_preview(data, card_cols=3, kpi_cols=2)
+            render_persona_kpi_preview(data, card_cols=num_columns_need, kpi_cols=2)
             generated_now = True
 
         # Save

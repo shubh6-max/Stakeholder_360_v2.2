@@ -82,3 +82,5 @@ cache/
 data/raw/
 data/tmp/
 artifacts/
+data/case_studies
+test.py
