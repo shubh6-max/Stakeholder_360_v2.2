@@ -25,6 +25,7 @@ from features.insights.store import _persona_key as persona_key  # same hashing 
 from components.aggrid_sections_all import LEFT_SECTIONS, RIGHT_SECTIONS
 from components.kpi_view import render_kpis
 from features.insights.persona_kpi_runtime import render_persona_fn_kpi_block
+import time
 # ------------------------------------------------------------------------------
 # Page setup
 # ------------------------------------------------------------------------------
@@ -237,29 +238,7 @@ left, right = st.columns([1, 1])
 
 with left:
     icon_url = "https://img.icons8.com/?size=100&id=11269&format=png&color=000000"
-    # st.markdown(
-    #     f"""
-    #     <div style="display:flex; align-items:center; gap:8px;">
-    #         <img src="{icon_url}" width="24" height="24">
-    #         <h3 style="margin:0;">Upward Org Chart</h3>
-    #     </div>
-    #     """,
-    #     unsafe_allow_html=True
-    # )
-    # st.markdown(
-    #     f"""
-    #     <div style="
-    #       display:flex;justify-content:space-between;align-items:center;
-    #       background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
-    #       padding:10px 12px;margin-bottom:10px;">
-    #       <div style="display:flex;align-items:center;gap:10px;">
-    #         <img src="https://img.icons8.com/?size=100&id=11269&format=png&color=000000" width="22" height="22" alt="info">
-    #         <div style="font-size:16px;font-weight:700;">Upward Org Chart</div>
-    #       </div>
-    #     </div>
-    #     """,
-    #     unsafe_allow_html=True,
-    # )
+    
     with st.container(border=True,height=630):
         st.markdown(
         f"""
@@ -378,29 +357,7 @@ with left:
 
 with right:
     icon_url = "https://img.icons8.com/?size=100&id=114049&format=png&color=000000"
-    # st.markdown(
-    #     f"""
-    #     <h3 style="display:flex; align-items:center; gap:8px; margin:0;">
-    #         <img src="{icon_url}" width="12" height="12" style="vertical-align:middle;">
-    #         Details
-    #     </h3>
-    #     """,
-    #     unsafe_allow_html=True
-    # )
-    # st.markdown(
-    #     f"""
-    #     <div style="
-    #       display:flex;justify-content:space-between;align-items:center;
-    #       background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
-    #       padding:10px 12px;margin-bottom:10px;">
-    #       <div style="display:flex;align-items:center;gap:10px;">
-    #         <img src="https://img.icons8.com/?size=100&id=Uj9DyJeLazL6&format=png&color=000000" width="22" height="22" alt="info">
-    #         <div style="font-size:16px;font-weight:700;">Linkedin details</div>
-    #       </div>
-    #     </div>
-    #     """,
-    #     unsafe_allow_html=True,
-    # )
+
     with st.container(border=True, height=630):
         st.markdown(
         f"""
@@ -505,9 +462,6 @@ with st.container(border=True, height="content"):
         st.info("Select a client above to view details.")
 
 # --- Insights (RAG) + KPIs (single button) ---
-# st.markdown("---")
-import time
-start_time=time.time()
 
 persona_row = row.to_dict()
 company_name = (row.get("account") or "").strip()
@@ -518,10 +472,26 @@ st.session_state.setdefault("last_insights_key", "")  # remember last shown to a
 
 # Styled button (your “Get insights” white → blue-on-hover)
 # get_insights = st.button("Get insights")
-left, right = st.columns([0.85, 0.11])  # adjust ratios as you like
+st.markdown("---")
+top,left, right = st.columns([0.35,0.55, 0.11])  # adjust ratios as you like
 with right:
     get_insights = st.button("Get insights", key="btn_get_insights")
 
+with top:
+    st.markdown(
+        f"""
+        <div style="
+          display:flex;justify-content:space-between;align-items:center;
+          background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+          padding:10px 12px;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <img src="https://img.icons8.com/?size=100&id=T79S3O9DdYtX&format=png&color=000000" width="22" height="22" alt="info">
+            <div style="font-size:16px;font-weight:700;">Get insights from annual report</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 # If user pressed the button, compute or reuse from session cache
 if get_insights:
     pinfo = _persona_info_for_key(persona_row)
@@ -564,7 +534,6 @@ elif st.session_state.get("last_insights_key"):
         pass
 
 # ------------------------------------------------------------------------------
-
 render_persona_fn_kpi_block()
 # ------------------------------------------------------------------------------
 st.divider()
@@ -574,4 +543,4 @@ if st.button("Logout"):
     st.switch_page("pages/login.py")
 
 
-# st.write(st.session_state)
+st.write(st.session_state)
