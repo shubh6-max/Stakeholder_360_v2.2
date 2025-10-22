@@ -8,19 +8,21 @@ import numpy as np
 import streamlit as st
 from sqlalchemy import text
 
+from components.persona_kpi_cards import render_persona_kpi_preview, render_impacts_block
 from utils.db import get_engine
 from utils.rag_env import get_chat_llm, get_embeddings
 from features.insights.case_retriever import (
     resolve_persona,
     get_distinct_case_functions,
-    embed_strings,
     retrieve_by_functions,
 )
 
-# ------------------------------
-# Prompts & small utils
-# ------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Prompt & helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
+# IMPORTANT: All literal braces are escaped with double braces `{{ ... }}` so
+# Python .format() does not treat them as placeholders.
 PROMPT_FN_KPI = """You are a B2B customer success analyst.
 
 Analyze the stakeholder's role and generate the following:
@@ -70,10 +72,29 @@ def _strip_html(s: Optional[str]) -> str:
 
 def _strip_fences(s: str) -> str:
     s = s.strip()
-    s = re.sub(r"^```json\s*", "", s, flags=re.I)
-    s = re.sub(r"^```\s*", "", s)
+    s = re.sub(r"^```json\s*", "", s, flags=re.I | re.M)
+    s = re.sub(r"^```\s*", "", s, flags=re.M)
     s = re.sub(r"\s*```$", "", s)
     return s.strip()
+
+def _parse_llm_json(text: str) -> Dict[str, Any]:
+    """
+    Try hard to parse JSON from LLM output:
+    - remove code fences
+    - if whole string fails, find the first {...} block
+    """
+    t = _strip_fences(text)
+    try:
+        return json.loads(t)
+    except Exception:
+        # greedy match first JSON object
+        m = re.search(r"\{.*\}", t, flags=re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                pass
+    raise ValueError("LLM did not return valid JSON.")
 
 def _dedupe_bullets(lines: List[str], threshold: float = 0.88) -> List[str]:
     if not lines:
@@ -109,9 +130,32 @@ def _extract_bullets(text: str, max_points: int = 5) -> List[str]:
     out = _dedupe_bullets(out, threshold=0.88)
     return out[:max_points]
 
-# ------------------------------
-# LinkedIn loader
-# ------------------------------
+def _flatten_schema(json_obj: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return [(function_label, payload_dict)]"""
+    out: List[Tuple[str, Dict[str, Any]]] = []
+    if not isinstance(json_obj, dict):
+        return out
+    for fn_label, payload in json_obj.items():
+        if isinstance(payload, dict):
+            out.append((str(fn_label).strip(), payload))
+    return out
+
+def _collect_from_preview(preview: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    """Extract function labels and KPI names from preview JSON."""
+    fn_labels: List[str] = []
+    kpi_names: List[str] = []
+    for fn_label, payload in _flatten_schema(preview):
+        fn_labels.append(fn_label)
+        for k in (payload or {}).get("strategic_kpis") or []:
+            kpi_names.append(str(k).strip())
+    # de-dup while preserving order
+    fn_labels = list(dict.fromkeys([x for x in fn_labels if x]))
+    kpi_names = list(dict.fromkeys([x for x in kpi_names if x]))
+    return fn_labels, kpi_names
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LinkedIn signals
+# ──────────────────────────────────────────────────────────────────────────────
 
 SQL_LINKEDIN_BY_URL = """
 SELECT client_present_title, client_present_description_html
@@ -160,22 +204,23 @@ def _load_linkedin_signals(engine, *, linkedin_url: Optional[str], email: Option
                 }
     return {"client_present_title": "", "client_present_description": ""}
 
-# ------------------------------
-# Function mapping helpers
-# ------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Function mapping (persona → case functions)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _map_functions_to_case(function_labels: List[str], case_fn_universe: List[str]) -> Tuple[List[str], Dict[str, float]]:
     if not function_labels or not case_fn_universe:
         return [], {}
+
     from features.insights.case_retriever import embed_strings as _embed_strings
-    persona_vecs = _embed_strings(function_labels)
-    case_vecs = _embed_strings(case_fn_universe)
+    p_vecs = _embed_strings(function_labels)
+    c_vecs = _embed_strings(case_fn_universe)
 
     picks: List[Tuple[str, float]] = []
-    for pv, p_label in zip(persona_vecs, function_labels):
+    for p_label, pv in zip(function_labels, p_vecs):
         pv = np.array(pv, dtype=np.float32)
         best = ("", -1.0)
-        for cv, c_label in zip(case_vecs, case_fn_universe):
+        for c_label, cv in zip(case_fn_universe, c_vecs):
             cv = np.array(cv, dtype=np.float32)
             sim = float(np.dot(pv/(np.linalg.norm(pv)+1e-8), cv/(np.linalg.norm(cv)+1e-8)))
             if sim > best[1]:
@@ -194,9 +239,9 @@ def _map_functions_to_case(function_labels: List[str], case_fn_universe: List[st
             break
     return chosen, conf
 
-# ------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # DB writes (Save)
-# ------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 
 SQL_WRITE_SHAREPOINT = """
 UPDATE scout.centralize_db
@@ -234,43 +279,30 @@ def _weight_from_text(name: str, desc: str) -> float:
         base -= 0.2
     return max(0.5, min(2.0, base))
 
-def _flatten_schema(json_obj: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
-    out: List[Tuple[str, Dict[str, Any]]] = []
-    if not isinstance(json_obj, dict):
-        return out
-    for fn_label, payload in json_obj.items():
-        if not isinstance(payload, dict):
-            continue
-        out.append((str(fn_label).strip(), payload))
-    return out
-
-def _render_preview(data: Dict[str, Any]) -> Tuple[List[str], List[str]]:
-    """Render preview in Streamlit and return (fn_labels, kpi_names)."""
-    fn_labels: List[str] = []
-    kpi_names: List[str] = []
-    st.markdown("### Persona Functions & KPIs (Preview)")
-    for fn_label, payload in _flatten_schema(data):
-        fn_labels.append(fn_label)
-        st.markdown(f"**Function:** {fn_label}")
-        inds = (payload or {}).get("Industry") or []
-        if inds:
-            st.caption("Industry: " + ", ".join(map(str, inds)))
-        kpis = (payload or {}).get("strategic_kpis") or []
-        for i, k in enumerate(kpis, 1):
-            st.write(f"{i}. {k}")
-            kpi_names.append(str(k))
-        st.markdown("---")
-    return fn_labels, kpi_names
-
-# ------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # Public UI block
-# ------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 
 def render_persona_fn_kpi_block():
-    st.markdown("---")
+    # st.markdown("---")
     with st.container(border=True):
-        st.subheading = st.subheader  # alias if older streamlit
-        st.subheader("Persona Functions, KPIs & Impact Pointers")
+        # st.subheader("Persona Functions, KPIs & Impact Pointers")
+        kpi_right_col,kpi_left_col= st.columns([2,6])
+        with kpi_right_col:
+            st.markdown(
+        f"""
+        <div style="
+          display:flex;justify-content:space-between;align-items:center;
+          background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+          padding:10px 12px;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <img src="https://img.icons8.com/?size=100&id=nNRpaPWMdCDG&format=png&color=000000" width="22" height="22" alt="info">
+            <div style="font-size:16px;font-weight:700;">Persona KPIs & Impact Pointers</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
         sel = (st.session_state.get("s360") or {}).get("selected_row") or st.session_state.get("s360.selected_row") or {}
         if not sel:
@@ -279,31 +311,39 @@ def render_persona_fn_kpi_block():
 
         engine = get_engine()
 
-        persona = resolve_persona(engine,
-                                  email=(sel.get("email_address") or "").strip() or None,
-                                  client_name=(sel.get("client_name") or "").strip() or None)
+        # Resolve persona: email first, else client_name only
+        persona = resolve_persona(
+            engine,
+            email=(sel.get("email_address") or "").strip() or None,
+            client_name=(sel.get("client_name") or "").strip() or None,
+        )
         if not persona:
             st.error("Could not resolve persona in scout.centralize_db using email or client_name.")
             return
 
         persona_id = int(persona["persona_id"])
         linkedin_url = persona.get("linkedin_url") or sel.get("linkedin_url")
-        li = _load_linkedin_signals(engine,
-                                    linkedin_url=linkedin_url or None,
-                                    email=(persona.get("email_address") or "").strip() or None,
-                                    name=(persona.get("persona_name") or "").strip() or None)
+        li = _load_linkedin_signals(
+            engine,
+            linkedin_url=linkedin_url or None,
+            email=(persona.get("email_address") or "").strip() or None,
+            name=(persona.get("persona_name") or "").strip() or None,
+        )
 
-        # SharePoint intel
+        # SharePoint intel input
         st.session_state.setdefault("sharepoint_intel", "")
-        sp_intel = st.text_area("Please add SharePoint intel (optional)",
-                                value=st.session_state.get("sharepoint_intel", ""),
-                                height=120)
+        sp_intel = st.text_area(
+            "SharePoint intel:",
+            value=st.session_state.get("sharepoint_intel", ""),
+            height=120,
+        )
         st.session_state["sharepoint_intel"] = sp_intel
 
+        # Buttons
         c1, c2, c3 = st.columns([1, 1, 1])
-
-        # --- Generate ---
         generated_now = False
+
+        # Generate
         if c1.button("Generate"):
             llm = get_chat_llm(temperature=0.1)
             msg = PROMPT_FN_KPI.format(
@@ -325,16 +365,19 @@ def render_persona_fn_kpi_block():
             )
             raw = llm.invoke(msg).content
             try:
-                data = json.loads(_strip_fences(raw))
+                data = _parse_llm_json(raw)
             except Exception:
+                # nudge the model once to return JSON-only
                 raw2 = llm.invoke("Return JSON ONLY. No prose.\n\n" + msg).content
-                data = json.loads(_strip_fences(raw2))
+                data = _parse_llm_json(raw2)
 
             st.session_state["persona_fn_kpis_preview"] = data
-            st.success("Generated persona functions & KPIs (preview).")
+            st.success("Generated persona functions & KPIs.")
+            # Show cards: 3 across, KPIs in 2 columns within each card
+            render_persona_kpi_preview(data, card_cols=3, kpi_cols=2)
             generated_now = True
 
-        # --- Save ---
+        # Save
         if c2.button("Save"):
             data = st.session_state.get("persona_fn_kpis_preview")
             if not data:
@@ -344,59 +387,56 @@ def render_persona_fn_kpi_block():
                 with engine.begin() as conn:
                     conn.execute(text(SQL_WRITE_SHAREPOINT), {"ir": sp_intel or "", "pid": persona_id})
 
-                # 2) Upsert persona functions (map to case functions to derive a confidence)
+                # 2) Upsert persona functions (confidence via mapping to case functions)
                 case_fn_universe = get_distinct_case_functions(engine)
-                fn_items = _flatten_schema(data)
-                inferred_fn_labels = [fn for fn, _ in fn_items] or []
-                mapped, conf = _map_functions_to_case(inferred_fn_labels, case_fn_universe)
+                preview_fn_labels, _ = _collect_from_preview(data)
+                mapped, conf = _map_functions_to_case(preview_fn_labels, case_fn_universe)
                 with engine.begin() as conn:
-                    for lbl in inferred_fn_labels:
-                        # use mapped confidence if available, else default
-                        best = 0.75
-                        for m in mapped:
-                            if m.lower() == lbl.lower():
-                                best = max(best, float(conf.get(m, 0.75)))
+                    for lbl in preview_fn_labels:
+                        # Use mapped confidence if label appears; default 0.75 otherwise
+                        best = max(0.75, float(conf.get(lbl, 0.0)))
                         conn.execute(text(SQL_UPSERT_PERSONA_FUNCTION),
-                                     {"pid": persona_id, "fn": lbl, "conf": float(best)})
+                                     {"pid": persona_id, "fn": lbl, "conf": best})
 
-                # 3) Upsert KPIs
+                # 3) Upsert KPIs per function
                 emb = get_embeddings()
                 with engine.begin() as conn:
-                    for fn_label, payload in fn_items:
-                        kpis = (payload or {}).get("strategic_kpis") or []
-                        for name in kpis:
+                    for fn_label, payload in _flatten_schema(data):
+                        for name in (payload or {}).get("strategic_kpis") or []:
                             name = str(name).strip()
                             if not name:
                                 continue
                             desc = ""
-                            weight = _weight_from_text(name, desc)
-                            patterns = []
+                            # light heuristic weight
+                            hi = ["margin","profit","revenue","retention","churn","nps","lead time","on-time","cost to serve","ots","otif","inventory turns"]
+                            lo = ["tickets","incidents","bugs","emails","calls"]
+                            weight = 1.0 + (0.3 if any(k in (name.lower()) for k in hi) else 0.0) - (0.2 if any(k in (name.lower()) for k in lo) else 0.0)
+                            weight = float(max(0.5, min(2.0, weight)))
+                            patterns: List[str] = []
                             v = emb.embed_query(name)
                             conn.execute(text(SQL_UPSERT_PERSONA_KPI), {
                                 "pid": persona_id,
                                 "name": name,
                                 "desc": desc,
-                                "w": float(weight),
+                                "w": weight,
                                 "patterns": json.dumps(patterns, ensure_ascii=False),
                                 "fn": fn_label,
                                 "emb": v,
                             })
                 st.success("Saved SharePoint intel, persona functions, and KPIs.")
 
-        # --- Fetch Impacts (manual) ---
+        # Fetch Impact Pointers
         fetch_clicked = c3.button("Fetch Impact Pointers")
 
-        # --- Render Preview (if exists) ---
-        preview = st.session_state.get("persona_fn_kpis_preview")
-        fn_labels: List[str] = []
-        kpi_names: List[str] = []
-        if preview:
-            fn_labels, kpi_names = _render_preview(preview)
+        # If preview exists (even before fetch), render KPI cards so user sees output
+        preview = st.session_state.get("persona_fn_kpis_preview", {})
+        if preview and not generated_now:
+            render_persona_kpi_preview(preview, card_cols=3, kpi_cols=2)
 
-        # --- Auto-fetch impacts after Generate (or when Fetch clicked) ---
-        should_fetch = generated_now or fetch_clicked
-        if should_fetch:
-            # If no preview, attempt DB KPIs instead
+        # Auto-fetch impacts after Generate OR when Fetch clicked
+        if generated_now or fetch_clicked:
+            # Collect function labels & KPIs from preview; if none, fall back to DB
+            fn_labels, kpi_names = _collect_from_preview(preview)
             if not fn_labels or not kpi_names:
                 with engine.begin() as conn:
                     rows = conn.execute(
@@ -404,15 +444,23 @@ def render_persona_fn_kpi_block():
                         {"pid": persona_id},
                     ).mappings().all()
                 for r in rows:
-                    kpi_names.append(r["kpi_name"])
-                    if r["function_label"]:
-                        fn_labels.append(r["function_label"])
+                    name = (r.get("kpi_name") or "").strip()
+                    if name:
+                        kpi_names.append(name)
+                    fn = (r.get("function_label") or "").strip()
+                    if fn:
+                        fn_labels.append(fn)
+                # de-dup
+                fn_labels = list(dict.fromkeys(fn_labels))
+                kpi_names = list(dict.fromkeys(kpi_names))
 
+            # Map persona → case functions (embedding-based)
             case_fn_universe = get_distinct_case_functions(engine)
-            mapped_labels, _ = _map_functions_to_case(list(dict.fromkeys(fn_labels)), case_fn_universe)
+            mapped_labels, _ = _map_functions_to_case(fn_labels, case_fn_universe)
 
+            # Build retrieval query
             parts = [
-                sp_intel or "",
+                st.session_state.get("sharepoint_intel") or "",
                 li.get("client_present_title",""),
                 li.get("client_present_description",""),
                 " ".join(kpi_names[:8]) if kpi_names else "",
@@ -421,7 +469,6 @@ def render_persona_fn_kpi_block():
                 persona.get("personalization_notes") or "",
             ]
             qtext = " ".join([p for p in parts if p]).strip()[:2000]
-
             if not qtext:
                 st.info("No query context available. Please add SharePoint intel or generate KPIs first.")
                 return
@@ -435,6 +482,7 @@ def render_persona_fn_kpi_block():
                 fallback_k=24,
             )
 
+            # Aggregate top-5 impact pointers
             impacts: List[str] = []
             best_src: Optional[Dict[str, Any]] = None
             for r in rows:
@@ -448,20 +496,9 @@ def render_persona_fn_kpi_block():
                     break
             impacts = impacts[:5]
 
-            st.markdown("### Results")
+            # Render: KPI cards + impacts in columns with source chip
             if impacts:
-                st.markdown("**Top Impact Pointers:**")
-                for i, p in enumerate(impacts, 1):
-                    st.write(f"{i}. {p}")
-                if best_src:
-                    meta = best_src.get("metadata") or {}
-                    spans = meta.get("spans") or []
-                    slides = ", ".join([f"Slide {s.get('slide_index')}" for s in spans]) or "—"
-                    st.caption(f"Source: {meta.get('file_name','—')} • {meta.get('case_study_name') or 'Case Study'} • {slides}")
+                render_impacts_block(impacts, best_src, impact_cols=2)
             else:
-                if not kpi_names:
-                    st.info("No impact pointers found and no KPIs available. Generate KPIs first.")
-                else:
-                    st.markdown("**No impact pointers found. Top suggested KPIs:**")
-                    for i, name in enumerate(kpi_names[:5], 1):
-                        st.write(f"{i}. {name}")
+                # No impacts → show only KPI cards (already rendered above)
+                st.info("No impact pointers found. Showing suggested KPIs above.")
