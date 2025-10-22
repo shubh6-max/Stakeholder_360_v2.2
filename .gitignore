@@ -84,3 +84,7 @@ data/tmp/
 artifacts/
 data/case_studies
 test.py
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+db/
