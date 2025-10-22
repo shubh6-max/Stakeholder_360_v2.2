@@ -372,10 +372,11 @@ def render_persona_fn_kpi_block():
                 data = _parse_llm_json(raw2)
 
             st.session_state["persona_fn_kpis_preview"] = data
-            num_columns_need=len(st.session_state["persona_fn_kpis_preview"])
+            num_columns_need=0
+            num_columns_need=num_columns_need+ len(st.session_state["persona_fn_kpis_preview"])
             st.success("Generated persona functions & KPIs.")
             # Show cards: 3 across, KPIs in 2 columns within each card
-            render_persona_kpi_preview(data, card_cols=num_columns_need, kpi_cols=2)
+            render_persona_kpi_preview(data, max_cols=num_columns_need)
             generated_now = True
 
         # Save
@@ -432,7 +433,9 @@ def render_persona_fn_kpi_block():
         # If preview exists (even before fetch), render KPI cards so user sees output
         preview = st.session_state.get("persona_fn_kpis_preview", {})
         if preview and not generated_now:
-            render_persona_kpi_preview(preview, card_cols=3, kpi_cols=2)
+            num_columns_need=0
+            num_columns_need=num_columns_need+ len(st.session_state["persona_fn_kpis_preview"])
+            render_persona_kpi_preview(preview, max_cols=num_columns_need)
 
         # Auto-fetch impacts after Generate OR when Fetch clicked
         if generated_now or fetch_clicked:

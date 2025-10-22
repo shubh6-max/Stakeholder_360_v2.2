@@ -1,14 +1,28 @@
 # components/persona_kpi_cards.py
 from __future__ import annotations
 from typing import Dict, Any, List, Optional, Tuple
+from contextlib import contextmanager
 import streamlit as st
 import math
 
-# -----------------------------
-# Small helpers
-# -----------------------------
-from contextlib import contextmanager
+# ──────────────────────────────────────────────────────────────────────────────
+# CSS (soft card look)
+# ──────────────────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+/* Softer container look */
+[data-testid="stContainer"] > div[style*="border: 1px"]{
+  border-radius: 14px !important;
+  border: 1px solid #e5e7eb !important;
+  box-shadow: 0 6px 16px rgba(15,23,42,0.06) !important;
+  padding: 14px !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Small helpers
+# ──────────────────────────────────────────────────────────────────────────────
 @contextmanager
 def _sized_card(min_height_px: int):
     st.markdown(f"<div style='min-height:{min_height_px}px'>", unsafe_allow_html=True)
@@ -27,13 +41,9 @@ def _inline_meta(label: str, items: List[str]) -> None:
             display:flex;align-items:center;gap:18px;
             margin:4px 0 10px 0; line-height:2;">
             <span style="
-                font-size:12px;
-                font-weight:800;
-                color:#0f172a;
-                background:#eef2ff;
-                border:1px solid #dbeafe;
-                padding:2px 8px;
-                border-radius:5px;">{label}</span>
+                font-size:12px;font-weight:800;color:#0f172a;
+                background:#eef2ff;border:1px solid #dbeafe;
+                padding:2px 8px;border-radius:5px;">{label}</span>
             <span style="font-size:12px;color:#334155;">
                 {', '.join(items)}
             </span>
@@ -41,7 +51,6 @@ def _inline_meta(label: str, items: List[str]) -> None:
         """,
         unsafe_allow_html=True,
     )
-
 
 def _func_blocks_from_preview(preview: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Preview JSON → [{function, kpis[], industry[]}, ...]"""
@@ -61,128 +70,149 @@ def _func_blocks_from_preview(preview: Dict[str, Any]) -> List[Dict[str, Any]]:
     return blocks
 
 def _chunk(lst: List[str], ncols: int) -> List[List[str]]:
-    """Split a list into ncols columns (balanced)."""
     if ncols <= 1 or not lst:
         return [lst]
-    # round up rows
     rows = math.ceil(len(lst) / ncols)
-    cols: List[List[str]] = []
-    for i in range(ncols):
-        cols.append(lst[i*rows:(i+1)*rows])
-    return cols
+    return [lst[i*rows:(i+1)*rows] for i in range(ncols)]
 
-def _pill(text: str):
-    st.markdown(
-        f"""
-        <span style="
-            display:inline-block;
-            padding:4px 10px;
-            border-radius:999px;
-            border:1px solid #e2e8f0;
-            background:#f8fafc;
-            font-size:11px;
-            font-weight:600;
-            color:#1e293b;
-            margin-right:6px;
-            margin-bottom:6px;
-        ">{text}</span>
-        """,
-        unsafe_allow_html=True,
-    )
+# Priority colors
+_PRIORITY_COLORS = {1: "#ef4444", 2: "#f59e0b", 3: "#3b82f6"}  # red, yellow, blue
+_DEFAULT_DOT = "#94a3b8"  # grey
 
-# -----------------------------
+def _dot_color_for_rank(rank: Optional[int]) -> str:
+    return _PRIORITY_COLORS.get(rank, _DEFAULT_DOT)
+
+def _auto_card_cols(blocks: List[Dict[str, Any]], max_cols: int = 3) -> int:
+    """Auto-detect number of columns based on content density."""
+    if not blocks:
+        return 1
+    n_cards = len(blocks)
+    max_kpis = max(len(b.get("kpis", [])) for b in blocks)
+    max_inds = max(len(b.get("industry", [])) for b in blocks)
+
+    if n_cards <= 2:
+        return n_cards
+    if max_kpis >= 10 or max_inds >= 5:
+        cols = 1
+    elif max_kpis >= 6 or max_inds >= 3:
+        cols = 2
+    else:
+        cols = 3
+    return max(1, min(cols, max_cols, n_cards))
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Public renderers
-# -----------------------------
-st.markdown("""
-<style>
-/* Softer container look */
-[data-testid="stContainer"] > div[style*="border: 1px"]{
-  border-radius: 14px !important;
-  border: 1px solid #e5e7eb !important;
-  box-shadow: 0 6px 16px rgba(15,23,42,0.06) !important;
-  padding: 14px !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
+# ──────────────────────────────────────────────────────────────────────────────
 def render_persona_kpi_preview(
     preview: Dict[str, Any],
     *,
-    card_cols: int = 3,   # how many columns of cards across
-    kpi_cols: int = 2,    # how many columns of KPI bullets inside each card
+    card_cols: Optional[int] = None,   # None → auto
+    max_cols: int = 3,                 # cap for auto mode
     max_kpis_per_card: int = 7,
+    priorities: Optional[Dict[str, int]] = None,  # {function_label: 1..3}
+    show_legend: bool = True,          # show color legend below cards
 ) -> None:
     """
-    Render Persona Functions & KPIs as cards laid out across 'card_cols' columns.
-    Inside each card, the KPI bullets are arranged into 'kpi_cols' columns.
+    Render Persona Functions & KPIs as cards.
+    - Inline Industry focus
+    - Single vertical KPI list
+    - Auto columns (1–3)
+    - Dynamic dot colors by rank
+    - Optional legend
     """
-    # st.markdown("#### Persona Functions & KPIs")
     blocks = _func_blocks_from_preview(preview)
     if not blocks:
         st.info("No persona KPIs generated yet. Click **Generate** above.")
         return
 
-    # Lay cards in streamlit columns (round-robin)
-    columns = st.columns(max(1, card_cols))
-    # st.write(max(1, card_cols))
+    # Auto-detect columns
+    cols_count = card_cols if isinstance(card_cols, int) and card_cols > 0 else _auto_card_cols(blocks, max_cols=max_cols)
+    columns = st.columns(cols_count)
+    
+    # ─── LEGEND (optional) ─────────────────────────────────────────────────────
+    if show_legend:
+        st.markdown("""
+        <div style="display:flex;gap:18px;align-items:center;
+                    margin-top:12px;padding:8px 12px;
+                    border:1px solid #e2e8f0;border-radius:10px;
+                    background:#f8fafc;font-size:12px;color:#334155;">
+            <span style="display:flex;align-items:center;gap:6px;">
+                <i style="width:10px;height:10px;border-radius:999px;background:#ef4444;"></i>
+                Most preferred / top priority
+            </span>
+            <span style="display:flex;align-items:center;gap:6px;">
+                <i style="width:10px;height:10px;border-radius:999px;background:#f59e0b;"></i>
+                Medium priority
+            </span>
+            <span style="display:flex;align-items:center;gap:6px;">
+                <i style="width:10px;height:10px;border-radius:999px;background:#3b82f6;"></i>
+                Lower but relevant
+            </span>
+            <span style="display:flex;align-items:center;gap:6px;">
+                <i style="width:10px;height:10px;border-radius:999px;background:#94a3b8;"></i>
+                Other supporting functions
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+
     for idx, b in enumerate(blocks):
-        col = columns[idx % card_cols]
+        col = columns[idx % cols_count]
         with col:
             with st.container(border=True):
+                fn_label = b['function'] or 'Business Function'
+                # rank from provided priorities; else 1→3 by order
+                rank = priorities.get(fn_label) if isinstance(priorities, dict) else ((idx + 1) if idx < 3 else None)
+                dot = _dot_color_for_rank(rank)
+
+                # Title with dot
                 st.markdown(
                     f"""
                     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-                        <div style="width:10px;height:10px;border-radius:999px;background:#2563eb;opacity:.9;"></div>
-                        <div style="font-weight:800;color:#0f172a;">{b['function'] or 'Business Function'}</div>
+                        <div title="Priority {rank if rank else '—'}"
+                             style="width:10px;height:10px;border-radius:999px;background:{dot};opacity:.95;"></div>
+                        <div style="font-weight:800;color:#0f172a;">{fn_label}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
-                # Industry chips
+
+                # Inline industry
                 inds = [s for s in (b["industry"] or []) if s.strip()]
                 _inline_meta("Industry focus:", inds)
 
-                # Dynamically size card based on industry count (each chip row ~ 24px)
-                # Base height covers title + margins; add 22px per extra industry item.
+                # Adjust height
                 base = 0
                 extra = max(0, len(inds) - 1) * 22
                 min_h = base + extra
 
-                # ── KPIs: single vertical list (no columns)
+                # KPI list
                 kpis = (b["kpis"] or [])[:max_kpis_per_card]
-
                 with _sized_card(min_h):
                     if not kpis:
                         st.write("- _No KPIs_")
                     else:
                         for item in kpis:
                             st.write(f"- {item}")
-
-
-
+    
 def render_impacts_block(
     impacts: List[str],
     best_src: Optional[Dict[str, Any]],
     *,
-    impact_cols: int = 2,      # columns for impact bullets
+    impact_cols: int = 2,
     show_source: bool = True,
 ) -> None:
-    """
-    Render Top Impact Pointers in 'impact_cols' columns.
-    Shows a compact source chip if best_src is provided.
-    """
+    """Top Impact Pointers + compact source chip."""
     st.markdown("#### Results")
     if not impacts:
         st.info("No impact pointers found. Top suggested KPIs are shown above.")
         return
 
-    # Impacts across columns
-    cols = st.columns(max(1, impact_cols),gap="medium")
+    cols = st.columns(max(1, impact_cols), gap="medium")
     chunks = _chunk(impacts, max(1, impact_cols))
     with st.container(border=True):
         for i, c in enumerate(cols):
             with c:
-                for j, item in enumerate(chunks[i], 1):
+                for item in chunks[i]:
                     st.write(f"{item}")
 
         if show_source and best_src:
