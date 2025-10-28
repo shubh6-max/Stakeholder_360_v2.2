@@ -26,6 +26,20 @@ from components.aggrid_sections_all import LEFT_SECTIONS, RIGHT_SECTIONS
 from components.kpi_view import render_kpis
 from features.insights.persona_kpi_runtime import render_persona_fn_kpi_block
 import time
+
+
+
+# ⬇️ Add with other imports at the top
+from s360_rag.schemas import PersonaInput
+from s360_rag.kpi_builder import build as build_case_kpis
+from s360_rag.matcher import match_strict
+from s360_rag.db import SessionLocal
+
+
+# --- RAG Case Study Matches (Top 3) ---
+from s360_rag.matcher_topn import match_topn
+from components.impact_cards import render_impact_results
+from sqlalchemy.orm import Session
 # ------------------------------------------------------------------------------
 # Page setup
 # ------------------------------------------------------------------------------
@@ -475,7 +489,7 @@ st.session_state.setdefault("last_insights_key", "")  # remember last shown to a
 st.markdown("---")
 top,left, right = st.columns([0.35,0.55, 0.11])  # adjust ratios as you like
 with right:
-    get_insights = st.button("Get insights", key="btn_get_insights")
+    get_insights = st.button("**Get insights**", key="btn_get_insights")
 
 with top:
     st.markdown(
@@ -536,7 +550,151 @@ elif st.session_state.get("last_insights_key"):
 # ------------------------------------------------------------------------------
 # Persona function + KPI block (separate feature)
 # ------------------------------------------------------------------------------
-render_persona_fn_kpi_block()
+# render_persona_fn_kpi_block()
+# =========================
+# Case Study RAG (STRICT)
+# =========================
+st.markdown("---")
+# csa_left, csa_mid, csa_right = st.columns([0.35, 0.55, 0.11])
+
+# with csa_left:
+#     st.markdown(
+#         """
+#         <div style="
+#           display:flex;justify-content:space-between;align-items:center;
+#           background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+#           padding:10px 12px;margin-bottom:10px;">
+#           <div style="display:flex;align-items:center;gap:10px;">
+#             <img src="https://img.icons8.com/?size=100&id=KJ1mh88H6K3a&format=png&color=000000" width="22" height="22" alt="cs">
+#             <div style="font-size:16px;font-weight:700;">Match Case Studies (Strict)</div>
+#           </div>
+#         </div>
+#         """,
+#         unsafe_allow_html=True,
+#     )
+
+# with csa_right:
+#     run_case_match = st.button("Find match", key="btn_find_match")
+
+# session caches for case-study matching
+st.session_state.setdefault("case_study_cache", {})         # { company: { persona_key: {...} } }
+st.session_state.setdefault("last_case_match_key", "")      # remember last shown match
+
+# =========================
+# Case Study RAG (TOP 3 Cards)
+# =========================
+# st.markdown("---")
+t3_left, t3_mid, t3_right = st.columns([0.25, 0.55, 0.20])
+
+with t3_left:
+    st.markdown(
+        """
+        <div style="
+          display:flex;justify-content:space-between;align-items:center;
+          background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+          padding:10px 12px;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <img src="https://img.icons8.com/?size=100&id=2PoOVhFsZ1Vj&format=png&color=000000" width="22" height="22" alt="top3">
+            <div style="font-size:16px;font-weight:700;">Relevent MathCo Case Studies</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with t3_right:
+    run_top3 = st.button("**Get impact pointers**", key="btn_top3_cards")
+
+# session cache for top-3
+st.session_state.setdefault("top3_cache", {})  # { company: { persona_key: {...} } }
+st.session_state.setdefault("last_top3_key", "")
+
+def _persona_text_from_row(r: dict) -> str:
+    return " | ".join(filter(None, [
+        r.get("client_designation"),
+        r.get("seniority_level"),
+        r.get("service_line") or r.get("business_unit") or r.get("working_group"),
+        r.get("subsidiary"),
+        r.get("client_name"),
+    ]))
+
+def _get_persona_kpis_for_current():
+    """Prefer KPIs from insights cache (already computed), else build fresh."""
+    company = (row.get("account") or "").strip()
+    pinfo = _persona_info_for_key(persona_row)
+    pkey = persona_key(company, pinfo)
+
+    # try insights cache first
+    ins_bucket = st.session_state.get("insights_cache", {}).get(company, {})
+    cached = ins_bucket.get(pkey)
+    if cached:
+        try:
+            return cached["kpi_payload"]["Business_Function"]["strategic_kpis"]
+        except Exception:
+            pass
+
+    # fallback: build KPIs quickly (same as strict section)
+    persona = PersonaInput(
+        client_name=(row.get("client_name") or "").strip(),
+        email_id=(row.get("email_address") or "").strip(),
+        client_designation=(row.get("client_designation") or "").strip(),
+        seniority_level=(row.get("seniority_level") or "").strip(),
+        working_group=(row.get("working_group") or "").strip(),
+        business_unit=(row.get("business_unit") or "").strip(),
+        business_functions=(row.get("service_line") or row.get("business_unit") or row.get("working_group") or "").strip(),
+        industry_hint=(row.get("subsidiary") or "").strip(),
+        linkedin_title="",
+        linkedin_about="",
+        linkedin_desc_html="",
+    )
+    kpi_block = build_case_kpis(persona)
+    return kpi_block.Business_Function["strategic_kpis"]
+
+def _render_top3_cards(payload: dict):
+    render_impact_results(
+        persona_kpis=payload.get("persona_kpis", []),
+        results=payload.get("items", []),
+        # title="",
+    )
+
+if run_top3:
+    company = (row.get("account") or "").strip()
+    pinfo = _persona_info_for_key(persona_row)
+    pkey = persona_key(company, pinfo)
+
+    top3_bucket = st.session_state["top3_cache"].setdefault(company, {})
+    cached_top3 = top3_bucket.get(pkey)
+
+    if cached_top3:
+        st.session_state["last_top3_key"] = f"{company}:{pkey}"
+        _render_top3_cards(cached_top3)
+    else:
+        persona_text = _persona_text_from_row(persona_row)
+        persona_kpis = _get_persona_kpis_for_current()
+
+        from s360_rag.db import SessionLocal
+        from s360_rag.matcher_topn import match_topn
+        with SessionLocal() as s:  # type: Session
+            items, ms = match_topn(s, persona_text, persona_kpis, top_n=3)
+
+        payload = {
+            "persona_kpis": persona_kpis,
+            "items": items,
+            "latency_ms": ms,
+        }
+        top3_bucket[pkey] = payload
+        st.session_state["last_top3_key"] = f"{company}:{pkey}"
+        _render_top3_cards(payload)
+
+# Auto-render Top-3 on rerun if present
+elif st.session_state.get("last_top3_key"):
+    try:
+        last_company, last_pkey = st.session_state["last_top3_key"].split(":", 1)
+        last_payload = st.session_state["top3_cache"].get(last_company, {}).get(last_pkey)
+        if last_payload:
+            _render_top3_cards(last_payload)
+    except Exception:
+        pass
 # ------------------------------------------------------------------------------
 st.divider()
 if st.button("Logout"):

@@ -287,7 +287,7 @@ def render_persona_fn_kpi_block():
     # st.markdown("---")
     with st.container(border=True):
         # st.subheader("Persona Functions, KPIs & Impact Pointers")
-        kpi_right_col,kpi_left_col= st.columns([2,6])
+        kpi_right_col,kpi_left_col= st.columns([3,6])
         with kpi_right_col:
             st.markdown(
         f"""
