@@ -87,8 +87,8 @@ def build(
     # System + user prompt designed for canonical, business-grade KPI names
     # No hard-coded heuristics; the LLM infers from role, function, industry, and LinkedIn signals.
     user_prompt = (
-        "You are a KPI standardization assistant. Based on the persona profile below, "
-        "produce a list of **canonical business KPIs** that this persona is most likely to track.\n\n"
+        "You are a Sales Development representative assistant. Based on the persona profile below, "
+        "produce a list of **canonical business KPIs** for this persona which will use to sale services.\n\n"
         "Rules:\n"
         "1) Output **only** well-known KPI names (no explanations, no formulas).\n"
         "2) Prefer function- and industry-relevant KPIs.\n"

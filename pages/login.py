@@ -113,31 +113,32 @@ if go_signup:
     st.switch_page("pages/signup.py")
 
 elif do_login and not locked:
-    # read values (ensure we read latest from session_state)
-    email_val = (st.session_state.get("login_email") or "").strip().lower()
-    password_val = st.session_state.get("login_password") or ""
+    with st.spinner("Logging in…"):
+        # read values (ensure we read latest from session_state)
+        email_val = (st.session_state.get("login_email") or "").strip().lower()
+        password_val = st.session_state.get("login_password") or ""
 
-    # Basic validations
-    if not email_val or not EMAIL_RE.match(email_val):
-        st.error("Please enter a valid email address.")
-    elif not password_val:
-        st.error("Please enter your password.")
-    else:
-        try:
-            ok = login_user(email_val, password_val)
-            if ok:
-                _reset_attempts_on_success()
-                st.success("✅ Login successful! Redirecting…")
-                time.sleep(0.25)
-                st.switch_page("pages/main_app.py")
-            else:
-                _record_failed_attempt()
-                if _check_lockout():
-                    pass  # lock message already shown
+        # Basic validations
+        if not email_val or not EMAIL_RE.match(email_val):
+            st.error("Please enter a valid email address.")
+        elif not password_val:
+            st.error("Please enter your password.")
+        else:
+            try:
+                ok = login_user(email_val, password_val)
+                if ok:
+                    _reset_attempts_on_success()
+                    st.success("✅ Login successful! Redirecting…")
+                    time.sleep(0.25)
+                    st.switch_page("pages/main_app.py")
                 else:
-                    st.error("❌ Invalid email or password.")
-        except Exception as e:
-            st.error(f"Something went wrong while logging in. Please try again.{e}")
+                    _record_failed_attempt()
+                    if _check_lockout():
+                        pass  # lock message already shown
+                    else:
+                        st.error("❌ Invalid email or password.")
+            except Exception as e:
+                st.error(f"Something went wrong while logging in. Please try again.{e}")
 
 
 # wrapper card end

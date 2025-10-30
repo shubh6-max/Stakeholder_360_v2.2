@@ -555,26 +555,6 @@ elif st.session_state.get("last_insights_key"):
 # Case Study RAG (STRICT)
 # =========================
 st.markdown("---")
-# csa_left, csa_mid, csa_right = st.columns([0.35, 0.55, 0.11])
-
-# with csa_left:
-#     st.markdown(
-#         """
-#         <div style="
-#           display:flex;justify-content:space-between;align-items:center;
-#           background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
-#           padding:10px 12px;margin-bottom:10px;">
-#           <div style="display:flex;align-items:center;gap:10px;">
-#             <img src="https://img.icons8.com/?size=100&id=KJ1mh88H6K3a&format=png&color=000000" width="22" height="22" alt="cs">
-#             <div style="font-size:16px;font-weight:700;">Match Case Studies (Strict)</div>
-#           </div>
-#         </div>
-#         """,
-#         unsafe_allow_html=True,
-#     )
-
-# with csa_right:
-#     run_case_match = st.button("Find match", key="btn_find_match")
 
 # session caches for case-study matching
 st.session_state.setdefault("case_study_cache", {})         # { company: { persona_key: {...} } }
@@ -584,7 +564,7 @@ st.session_state.setdefault("last_case_match_key", "")      # remember last show
 # Case Study RAG (TOP 3 Cards)
 # =========================
 # st.markdown("---")
-t3_left, t3_mid, t3_right = st.columns([0.25, 0.55, 0.20])
+t3_left, t3_mid, t3_right = st.columns([0.35,0.55, 0.21])
 
 with t3_left:
     st.markdown(
@@ -658,33 +638,33 @@ def _render_top3_cards(payload: dict):
     )
 
 if run_top3:
-    company = (row.get("account") or "").strip()
-    pinfo = _persona_info_for_key(persona_row)
-    pkey = persona_key(company, pinfo)
+    with st.spinner("Finding relevant case studies.This might take sometime..."):
+        company = (row.get("account") or "").strip()
+        pinfo = _persona_info_for_key(persona_row)
+        pkey = persona_key(company, pinfo)
 
-    top3_bucket = st.session_state["top3_cache"].setdefault(company, {})
-    cached_top3 = top3_bucket.get(pkey)
+        top3_bucket = st.session_state["top3_cache"].setdefault(company, {})
+        cached_top3 = top3_bucket.get(pkey)
 
-    if cached_top3:
-        st.session_state["last_top3_key"] = f"{company}:{pkey}"
-        _render_top3_cards(cached_top3)
-    else:
-        persona_text = _persona_text_from_row(persona_row)
-        persona_kpis = _get_persona_kpis_for_current()
+        if cached_top3:
+            st.session_state["last_top3_key"] = f"{company}:{pkey}"
+            _render_top3_cards(cached_top3)
+        else:
+            persona_text = _persona_text_from_row(persona_row)
+            persona_kpis = _get_persona_kpis_for_current()
 
-        from s360_rag.db import SessionLocal
-        from s360_rag.matcher_topn import match_topn
-        with SessionLocal() as s:  # type: Session
-            items, ms = match_topn(s, persona_text, persona_kpis, top_n=3)
 
-        payload = {
-            "persona_kpis": persona_kpis,
-            "items": items,
-            "latency_ms": ms,
-        }
-        top3_bucket[pkey] = payload
-        st.session_state["last_top3_key"] = f"{company}:{pkey}"
-        _render_top3_cards(payload)
+            with SessionLocal() as s:  # type: Session
+                items, ms = match_topn(s, persona_text, persona_kpis, top_n=3)
+
+            payload = {
+                "persona_kpis": persona_kpis,
+                "items": items,
+                "latency_ms": ms,
+            }
+            top3_bucket[pkey] = payload
+            st.session_state["last_top3_key"] = f"{company}:{pkey}"
+            _render_top3_cards(payload)
 
 # Auto-render Top-3 on rerun if present
 elif st.session_state.get("last_top3_key"):
@@ -702,5 +682,31 @@ if st.button("Logout"):
     st.success("You have been logged out.")
     st.switch_page("pages/login.py")
 
+# st.write(st.session_state)
 
-st.write(st.session_state)
+import json
+import streamlit as st
+from pathlib import Path
+
+def save_session_state():
+    try:
+        # Define base directory and file name dynamically
+        path = Path("session_states")
+        path.mkdir(exist_ok=True)
+
+        client_name = st.session_state.get("flt_client_name", "default_client")
+        file_path = path / f"{client_name}.json"
+
+        # Convert session_state to JSON-safe dict
+        data = {k: v for k, v in st.session_state.items()}
+        json_safe = json.loads(json.dumps(data, default=str))
+
+        # Write to file
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(json_safe, f, indent=4, ensure_ascii=False)
+
+        st.success(f"✅ Session state saved to {file_path.resolve()}")
+    except Exception as e:
+        st.error(f"❌ Failed to save session state: {e}")
+
+save_session_state()
