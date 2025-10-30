@@ -29,14 +29,14 @@ def render_impact_results(
     show_score: bool = True,
 ):
     # st.markdown(f"### {html.escape(title)}")
-
+    client_name_from_session_state=st.session_state["flt_client_name"]
     # Persona KPI Card
     with st.container(border=True,height=100):
         st.markdown(
-            """
+            f"""
             <div style="display:flex;align-items:center;gap:10px;margin: -8px 0 8px 0;">
               <img src="https://img.icons8.com/?size=100&id=SYYdTqwzlx8d&format=png&color=1A1A1A" width="18" height="18"/>
-              <div style="font-weight:700;">Persona KPIs</div>
+              <div style="font-weight:700;">{client_name_from_session_state} KPIs</div>
             </div>
             """,
             unsafe_allow_html=True,
