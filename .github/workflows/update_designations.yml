@@ -25,11 +25,11 @@ jobs:
 
       - name: Run Azure OpenAI classification and DB update
         env:
-          PG_USER: ${{ secrets.PG_USER }}
-          PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
-          PG_HOST: ${{ secrets.PG_HOST }}
-          PG_PORT: ${{ secrets.PG_PORT }}
-          PG_DB: ${{ secrets.PG_DB }}
+          PG_USER: ${{ secrets.PGUSER }}
+          PG_PASSWORD: ${{ secrets.PGPASSWORD }}
+          PG_HOST: ${{ secrets.PGHOST }}
+          PG_PORT: ${{ secrets.PGPORT }}
+          PG_DB: ${{ secrets.PGDATABASE }}
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
           AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
           AZURE_DEPLOYMENT: ${{ secrets.AZURE_DEPLOYMENT }}
