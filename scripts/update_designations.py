@@ -26,11 +26,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-PG_USER = os.getenv("PGUSER")
-PG_PASSWORD = os.getenv("PGPASSWORD")
-PG_HOST = os.getenv("PGHOST")
-PG_PORT = os.getenv("PGPORT", "5432")
-PG_DB = os.getenv("PGDATABASE")
+PG_USER = os.getenv("PG_USER") or os.getenv("PGUSER")
+PG_PASSWORD = os.getenv("PG_PASSWORD") or os.getenv("PGPASSWORD")
+PG_HOST = os.getenv("PG_HOST") or os.getenv("PGHOST")
+PG_PORT = os.getenv("PG_PORT") or os.getenv("PGPORT", "5432")
+PG_DB = os.getenv("PG_DB") or os.getenv("PGDATABASE")
+
 
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
