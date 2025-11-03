@@ -5,7 +5,8 @@ from services.embeddings import embed_query
 from services.reranker import rerank_impacts
 from config.settings import DEFAULT_CANDIDATES_TOP_K
 from utils.logger import logger
-
+# ======================================================
+# 🧩 Core: Vector DB search for impacts
 def search_impacts_by_text(engine: Engine, query_text: str, top_k: int = DEFAULT_CANDIDATES_TOP_K) -> List[Dict]:
     q_emb = embed_query(query_text)
     with engine.begin() as conn:

@@ -237,6 +237,31 @@ def build_sections_snapshot(row: dict) -> dict:
     left = {title: pack(fields) for (title, _key, fields) in LEFT_SECTIONS}
     right = {title: pack(fields) for (title, _key, fields) in RIGHT_SECTIONS}
     return {"left": left, "right": right}
+
+
+
+from sqlalchemy import text
+
+def fetch_persona_record(email: str, client_name: str, account: str) -> dict:
+            engine = get_engine()
+            with engine.begin() as conn:
+                df = pd.read_sql(
+                    text("""
+                        SELECT *
+                        FROM scout.centralize_db
+                        WHERE (LOWER(email_address) = LOWER(:email) AND email_address <> '')
+                           OR (LOWER(client_name) = LOWER(:client_name) AND account = :account)
+                        LIMIT 1
+                    """),
+                    conn,
+                    params={
+                        "email": email.strip(),
+                        "client_name": client_name.strip(),
+                        "account": account.strip()
+                    }
+                )
+            return df.to_dict(orient="records")[0] if not df.empty else {}
+
 # ------------------------------------------------------------------------------
 # Interdependent filters (each one filters the next)
 # ------------------------------------------------------------------------------
@@ -324,6 +349,8 @@ with left:
     )
         row = flt_f.iloc[0] if not flt_f.empty else None
 
+    
+
         # --- Persist the selected stakeholder + sections snapshot into session ---
         if row is not None:
             _row_dict = row.to_dict()
@@ -346,6 +373,19 @@ with left:
                 "seniority_level": _row_dict.get("seniority_level", ""),
                 "last_update_date": _row_dict.get("last_update_date", ""),
             }
+
+            try:
+                email = _row_dict.get("email_address", "")
+                client_name = _row_dict.get("client_name", "")
+                account = _row_dict.get("account", "")
+                selected_persona_data = fetch_persona_record(email, client_name, account)
+
+                # Store only that record in session
+                st.session_state["s360.full_persona_data"] = selected_persona_data
+            except Exception as e:
+                st.warning(f"Could not fetch detailed persona record: {e}")
+                traceback.print_exc()
+
         else:
             # Clear snapshots if nothing is selected
             st.session_state.pop("s360.selected_row", None)
@@ -586,7 +626,6 @@ if get_insights:
             "duration_sec": took,
         }
         st.session_state["last_insights_key"] = f"{company_name}:{pkey}"
-        # st.caption(f"Generated and cached (session) • {took}s")
         _render_cached(kpi_payload)
 
 # If page re-runs and we have a last result, show it without needing a click again
@@ -601,93 +640,97 @@ elif st.session_state.get("last_insights_key"):
     except Exception:
         pass
 
-# ------------------------------------------------------------------------------
-# Persona function + KPI block (separate feature)
-# ------------------------------------------------------------------------------
-# render_persona_fn_kpi_block()
-# =========================
-# Case Study RAG (STRICT)
-# =========================
-st.markdown("---")
+# ======================================================
+# 🎯 Persona KPI & Impact Section (New RAG Block)
+# ======================================================
+# from s360_rag.persona_kpi_ui import render_persona_kpi_block
 
-# session caches for case-study matching
-st.session_state.setdefault("case_study_cache", {})         # { company: { persona_key: {...} } }
-st.session_state.setdefault("last_case_match_key", "")      # remember last shown match
+# if "s360.full_persona_data" in st.session_state:
+#     persona_data = st.session_state["s360.full_persona_data"]
+#     top, left, right = st.columns([0.35, 0.35, 0.13])
 
-# =========================
-# Case Study RAG (TOP 3 Cards)
-# =========================
-# st.markdown("---")
-t3_left, t3_mid, t3_right = st.columns([0.35,0.55, 0.21])
+#     with top:
+#         st.markdown(
+#             f"""
+#             <div style="
+#               display:flex;justify-content:space-between;align-items:center;
+#               background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+#               padding:10px 12px;margin-bottom:10px;">
+#               <div style="display:flex;align-items:center;gap:10px;">
+#                 <img src="https://img.icons8.com/?size=100&id=108226&format=png&color=000000" width="22" height="22" alt="info">
+#                 <div style="font-size:16px;font-weight:700;">Persona KPI & Impact Insights</div>
+#               </div>
+#             </div>
+#             """,
+#             unsafe_allow_html=True,
+#         )
+#     with right:
+#         generate_kpi_bttn = st.button("**Get impact pointers**", use_container_width=True, type="primary")
 
-with t3_left:
-    st.markdown(
-        """
-        <div style="
-          display:flex;justify-content:space-between;align-items:center;
-          background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
-          padding:10px 12px;margin-bottom:10px;">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <img src="https://img.icons8.com/?size=100&id=2PoOVhFsZ1Vj&format=png&color=000000" width="22" height="22" alt="top3">
-            <div style="font-size:16px;font-weight:700;">Relevent MathCo Case Studies</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+#     if generate_kpi_bttn:
+#         render_persona_kpi_block(persona_data)
+# else:
+#     st.info("Select a persona first to view KPI & impact insights.")
+# ===============================================
+# 🎯 Persona KPI + Impact Insights Section
+# ===============================================
+import streamlit as st
+from s360_rag.persona_kpi_ui import render_persona_kpi_block
 
-with t3_right:
-    run_top3 = st.button("**Get impact pointers**", key="btn_top3_cards")
+# Ensure persona data is available from previous step
+if "s360.full_persona_data" in st.session_state:
+    persona_data = st.session_state["s360.full_persona_data"]
 
-# session cache for top-3
-st.session_state.setdefault("top3_cache", {})  # { company: { persona_key: {...} } }
-st.session_state.setdefault("last_top3_key", "")
+    # Layout: header + button aligned to right
+    top, left, right = st.columns([0.35, 0.35, 0.13])
+    with top:
+        st.markdown(
+            """
+            <div style="
+                display:flex;align-items:center;
+                background:#f8fafc;
+                border:1px solid #e2e8f0;
+                border-radius:12px;
+                padding:10px 14px;
+                margin-bottom:8px;">
+                <img src="https://img.icons8.com/?size=100&id=123466&format=png&color=000000"
+                     width="22" height="22" alt="info"
+                     style="margin-right:8px;">
+                <div style="font-size:16px;font-weight:700;">
+                    Persona KPI & Impact Insights
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
+    with right:
+        generate_kpi_bttn = st.button("**Get Impact Pointers**",
+                                      use_container_width=True,
+                                      type="primary")
 
+    # Cache key per persona to persist across refresh
+    persona_name = persona_data.get("client_name", "Unknown Persona")
+    persona_info_key = f"persona_{hash(persona_name)}"
 
-if run_top3:
-    with st.spinner("Finding relevant case studies.This might take sometime..."):
-        company = (row.get("account") or "").strip()
-        st.write(company)
-        pinfo = _persona_info_for_key(persona_row)
-        st.write(pinfo)
-        pkey = persona_key(company, pinfo)
-        st.write(pkey)
-        top3_bucket = st.session_state["top3_cache"].setdefault(company, {})
-        st.write(top3_bucket)
-        cached_top3 = top3_bucket.get(pkey)
-        st.write(cached_top3)
+    # --- Run logic ---
+    if generate_kpi_bttn:
+        render_persona_kpi_block(persona_data)
+        st.session_state["last_persona"] = persona_name
 
-        if cached_top3:
-            st.session_state["last_top3_key"] = f"{company}:{pkey}"
-            _render_top3_cards(cached_top3)
-        else:
-            persona_text = _persona_text_from_row(persona_row)
-            persona_kpis = _get_persona_kpis_for_current()
+    # --- Auto-rebuild if cached (page refresh) ---
+    elif (
+        "rag_cache" in st.session_state
+        and persona_info_key in st.session_state["rag_cache"]
+    ):
+        st.caption(f"🔁 Restoring cached insights for {persona_name}")
+        render_persona_kpi_block(persona_data)
 
+else:
+    st.info("👤 Please select a persona first to view KPI & Impact Insights.")
 
-            with SessionLocal() as s:  # type: Session
-                items, ms = match_topn(s, persona_text, persona_kpis, top_n=3)
-
-            payload = {
-                "persona_kpis": persona_kpis,
-                "items": items,
-                "latency_ms": ms,
-            }
-            top3_bucket[pkey] = payload
-            st.session_state["last_top3_key"] = f"{company}:{pkey}"
-            _render_top3_cards(payload)
-
-# Auto-render Top-3 on rerun if present
-elif st.session_state.get("last_top3_key"):
-    try:
-        last_company, last_pkey = st.session_state["last_top3_key"].split(":", 1)
-        last_payload = st.session_state["top3_cache"].get(last_company, {}).get(last_pkey)
-        if last_payload:
-            _render_top3_cards(last_payload)
-    except Exception:
-        pass
-# ------------------------------------------------------------------------------
+# ===================================================================================
+# Logout button at the bottom
 st.divider()
 if st.button("Logout"):
     logout()
