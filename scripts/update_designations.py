@@ -15,23 +15,51 @@ from dotenv import load_dotenv
 # ====================================================
 # 1️⃣ Load environment variables (from GitHub secrets)
 # ====================================================
+# ====================================================
+# 1️⃣ Load environment variables (from .env or GitHub Secrets)
+# ====================================================
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # loads local .env if running manually; GitHub injects ENV automatically
+load_dotenv()  # loads local .env if running manually
 
+# Fetch values
 PG_USER = os.getenv("PGUSER")
 PG_PASSWORD = os.getenv("PGPASSWORD")
 PG_HOST = os.getenv("PGHOST")
 PG_PORT = os.getenv("PGPORT", "5432")
 PG_DB = os.getenv("PGDATABASE")
+
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
 AZURE_API_KEY = os.getenv("AZURE_API_KEY")
 AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-02-15-preview")
 
-if not all([PG_USER, PG_PASSWORD, PG_HOST, PG_DB, AZURE_API_KEY, AZURE_ENDPOINT, AZURE_DEPLOYMENT]):
-    raise EnvironmentError("❌ Missing one or more required environment variables.")
+# --- Check for missing values ---
+missing = []
+for var_name, var_value in {
+    "PG_USER": PG_USER,
+    "PG_PASSWORD": PG_PASSWORD,
+    "PG_HOST": PG_HOST,
+    "PG_PORT": PG_PORT,
+    "PG_DB": PG_DB,
+    "AZURE_ENDPOINT": AZURE_ENDPOINT,
+    "AZURE_DEPLOYMENT": AZURE_DEPLOYMENT,
+    "AZURE_API_KEY": AZURE_API_KEY,
+    "AZURE_API_VERSION": AZURE_API_VERSION,
+}.items():
+    if not var_value:
+        missing.append(var_name)
+
+if missing:
+    print("❌ Missing environment variables:")
+    for v in missing:
+        print(f"   - {v}")
+    raise EnvironmentError(f"❌ Total missing vars: {len(missing)}")
+
+else:
+    print("✅ All environment variables loaded successfully!")
+
 
 
 # ====================================================
