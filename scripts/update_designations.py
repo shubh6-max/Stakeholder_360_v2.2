@@ -20,11 +20,11 @@ from dotenv import load_dotenv
 
 load_dotenv()  # loads local .env if running manually; GitHub injects ENV automatically
 
-PG_USER = os.getenv("PG_USER")
-PG_PASSWORD = os.getenv("PG_PASSWORD")
-PG_HOST = os.getenv("PG_HOST")
-PG_PORT = os.getenv("PG_PORT", "5432")
-PG_DB = os.getenv("PG_DB")
+PG_USER = os.getenv("PGUSER")
+PG_PASSWORD = os.getenv("PGPASSWORD")
+PG_HOST = os.getenv("PGHOST")
+PG_PORT = os.getenv("PGPORT", "5432")
+PG_DB = os.getenv("PGDATABASE")
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
 AZURE_API_KEY = os.getenv("AZURE_API_KEY")
