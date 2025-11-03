@@ -40,6 +40,12 @@ from s360_rag.db import SessionLocal
 from s360_rag.matcher_topn import match_topn
 from components.impact_cards import render_impact_results
 from sqlalchemy.orm import Session
+
+import os
+from s360_rag.config import SIM_THRESHOLD, TOP_K, AZURE_EMBED_DEPLOYMENT
+if os.getenv("DEBUG_RAG","0") == "1":
+    st.info(f"RAG DEBUG • SIM_THRESHOLD={SIM_THRESHOLD} • DIST_TH={1-SIM_THRESHOLD:.2f} • TOP_K={TOP_K} • EMB={AZURE_EMBED_DEPLOYMENT}")
+
 # ------------------------------------------------------------------------------
 # Page setup
 # ------------------------------------------------------------------------------
@@ -129,6 +135,54 @@ def build_option_catalog(source_df: pd.DataFrame) -> Dict[str, List[str]]:
         "status": vals("status"),
         "lead_priority": vals("lead_priority"),
     }
+
+def _persona_text_from_row(r: dict) -> str:
+    return " | ".join(filter(None, [
+        r.get("client_designation"),
+        r.get("seniority_level"),
+        r.get("service_line") or r.get("business_unit") or r.get("working_group"),
+        r.get("subsidiary"),
+        r.get("client_name"),
+    ]))
+
+def _get_persona_kpis_for_current():
+    """Prefer KPIs from insights cache (already computed), else build fresh."""
+    company = (row.get("account") or "").strip()
+    pinfo = _persona_info_for_key(persona_row)
+    pkey = persona_key(company, pinfo)
+
+    # try insights cache first
+    ins_bucket = st.session_state.get("insights_cache", {}).get(company, {})
+    cached = ins_bucket.get(pkey)
+    if cached:
+        try:
+            return cached["kpi_payload"]["Business_Function"]["strategic_kpis"]
+        except Exception:
+            pass
+
+    # fallback: build KPIs quickly (same as strict section)
+    persona = PersonaInput(
+        client_name=(row.get("client_name") or "").strip(),
+        email_id=(row.get("email_address") or "").strip(),
+        client_designation=(row.get("client_designation") or "").strip(),
+        seniority_level=(row.get("seniority_level") or "").strip(),
+        working_group=(row.get("working_group") or "").strip(),
+        business_unit=(row.get("business_unit") or "").strip(),
+        business_functions=(row.get("service_line") or row.get("business_unit") or row.get("working_group") or "").strip(),
+        industry_hint=(row.get("subsidiary") or "").strip(),
+        linkedin_title="",
+        linkedin_about="",
+        linkedin_desc_html="",
+    )
+    kpi_block = build_case_kpis(persona)
+    return kpi_block.Business_Function["strategic_kpis"]
+
+def _render_top3_cards(payload: dict):
+    render_impact_results(
+        persona_kpis=payload.get("persona_kpis", []),
+        results=payload.get("items", []),
+        # title="",
+    )
 
 def _persona_info_for_key(r: dict) -> dict:
     """Build the info dict used for persona_key (matches retrieve/store logic)."""
@@ -589,62 +643,20 @@ with t3_right:
 st.session_state.setdefault("top3_cache", {})  # { company: { persona_key: {...} } }
 st.session_state.setdefault("last_top3_key", "")
 
-def _persona_text_from_row(r: dict) -> str:
-    return " | ".join(filter(None, [
-        r.get("client_designation"),
-        r.get("seniority_level"),
-        r.get("service_line") or r.get("business_unit") or r.get("working_group"),
-        r.get("subsidiary"),
-        r.get("client_name"),
-    ]))
 
-def _get_persona_kpis_for_current():
-    """Prefer KPIs from insights cache (already computed), else build fresh."""
-    company = (row.get("account") or "").strip()
-    pinfo = _persona_info_for_key(persona_row)
-    pkey = persona_key(company, pinfo)
-
-    # try insights cache first
-    ins_bucket = st.session_state.get("insights_cache", {}).get(company, {})
-    cached = ins_bucket.get(pkey)
-    if cached:
-        try:
-            return cached["kpi_payload"]["Business_Function"]["strategic_kpis"]
-        except Exception:
-            pass
-
-    # fallback: build KPIs quickly (same as strict section)
-    persona = PersonaInput(
-        client_name=(row.get("client_name") or "").strip(),
-        email_id=(row.get("email_address") or "").strip(),
-        client_designation=(row.get("client_designation") or "").strip(),
-        seniority_level=(row.get("seniority_level") or "").strip(),
-        working_group=(row.get("working_group") or "").strip(),
-        business_unit=(row.get("business_unit") or "").strip(),
-        business_functions=(row.get("service_line") or row.get("business_unit") or row.get("working_group") or "").strip(),
-        industry_hint=(row.get("subsidiary") or "").strip(),
-        linkedin_title="",
-        linkedin_about="",
-        linkedin_desc_html="",
-    )
-    kpi_block = build_case_kpis(persona)
-    return kpi_block.Business_Function["strategic_kpis"]
-
-def _render_top3_cards(payload: dict):
-    render_impact_results(
-        persona_kpis=payload.get("persona_kpis", []),
-        results=payload.get("items", []),
-        # title="",
-    )
 
 if run_top3:
     with st.spinner("Finding relevant case studies.This might take sometime..."):
         company = (row.get("account") or "").strip()
+        st.write(company)
         pinfo = _persona_info_for_key(persona_row)
+        st.write(pinfo)
         pkey = persona_key(company, pinfo)
-
+        st.write(pkey)
         top3_bucket = st.session_state["top3_cache"].setdefault(company, {})
+        st.write(top3_bucket)
         cached_top3 = top3_bucket.get(pkey)
+        st.write(cached_top3)
 
         if cached_top3:
             st.session_state["last_top3_key"] = f"{company}:{pkey}"
@@ -682,31 +694,4 @@ if st.button("Logout"):
     st.success("You have been logged out.")
     st.switch_page("pages/login.py")
 
-# st.write(st.session_state)
-
-import json
-import streamlit as st
-from pathlib import Path
-
-def save_session_state():
-    try:
-        # Define base directory and file name dynamically
-        path = Path("session_states")
-        path.mkdir(exist_ok=True)
-
-        client_name = st.session_state.get("flt_client_name", "default_client")
-        file_path = path / f"{client_name}.json"
-
-        # Convert session_state to JSON-safe dict
-        data = {k: v for k, v in st.session_state.items()}
-        json_safe = json.loads(json.dumps(data, default=str))
-
-        # Write to file
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(json_safe, f, indent=4, ensure_ascii=False)
-
-        st.success(f"✅ Session state saved to {file_path.resolve()}")
-    except Exception as e:
-        st.error(f"❌ Failed to save session state: {e}")
-
-save_session_state()
+st.write(st.session_state)
