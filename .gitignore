@@ -88,3 +88,5 @@ test.py
 __pycache__/
 *.pyc
 db/
+*.sql
+*.xlsx
