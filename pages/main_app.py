@@ -640,37 +640,7 @@ elif st.session_state.get("last_insights_key"):
     except Exception:
         pass
 
-# ======================================================
-# 🎯 Persona KPI & Impact Section (New RAG Block)
-# ======================================================
-# from s360_rag.persona_kpi_ui import render_persona_kpi_block
 
-# if "s360.full_persona_data" in st.session_state:
-#     persona_data = st.session_state["s360.full_persona_data"]
-#     top, left, right = st.columns([0.35, 0.35, 0.13])
-
-#     with top:
-#         st.markdown(
-#             f"""
-#             <div style="
-#               display:flex;justify-content:space-between;align-items:center;
-#               background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
-#               padding:10px 12px;margin-bottom:10px;">
-#               <div style="display:flex;align-items:center;gap:10px;">
-#                 <img src="https://img.icons8.com/?size=100&id=108226&format=png&color=000000" width="22" height="22" alt="info">
-#                 <div style="font-size:16px;font-weight:700;">Persona KPI & Impact Insights</div>
-#               </div>
-#             </div>
-#             """,
-#             unsafe_allow_html=True,
-#         )
-#     with right:
-#         generate_kpi_bttn = st.button("**Get impact pointers**", use_container_width=True, type="primary")
-
-#     if generate_kpi_bttn:
-#         render_persona_kpi_block(persona_data)
-# else:
-#     st.info("Select a persona first to view KPI & impact insights.")
 # ===============================================
 # 🎯 Persona KPI + Impact Insights Section
 # ===============================================
