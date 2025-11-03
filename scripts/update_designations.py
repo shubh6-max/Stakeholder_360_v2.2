@@ -164,7 +164,7 @@ Example:
 # ====================================================
 def classify_missing(df: pd.DataFrame):
     results = []
-    for _, row in df[:10].iterrows():
+    for _, row in df.iterrows():
         try:
             info = extract_role_type(row["client_designation"])
             info.update({
