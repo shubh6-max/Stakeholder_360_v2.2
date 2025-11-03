@@ -29,7 +29,6 @@ def _install_streamlit_dummy_if_headless():
         def write(self, *a, **k): pass
         def info(self, *a, **k): pass
         def success(self, *a, **k): pass
-
     dummy.st = _DummyST()
     dummy.spinner = dummy.st.spinner
     dummy.warning = dummy.st.warning
@@ -46,24 +45,18 @@ logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").set
 # =========================
 # Imports (+ force auto-migration for this process)
 # =========================
-import os
-# ensure downstream ensure_rag_schema() (called from retrieve.py) can auto-migrate
-os.environ.setdefault("RAG_AUTO_MIGRATE", "1")
-
-import time, random, threading, traceback
+import os, time, random, threading, traceback
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import deque
-
 from sqlalchemy import text, bindparam
 from sqlalchemy.engine import Engine
 
-# Deadlock-aware retries (optional import guard)
+# Deadlock-aware retries
 try:
     from psycopg2.errors import DeadlockDetected
-except Exception:  # pragma: no cover
-    class DeadlockDetected(Exception):
-        pass
+except Exception:
+    class DeadlockDetected(Exception): pass
 
 from utils.db import get_engine
 from utils.rag_db import ensure_rag_schema
@@ -71,20 +64,18 @@ from features.insights.store import ensure_kpi_cache, upsert_kpis, _persona_key
 from features.insights.retrieve import run_kpis_for_persona
 
 # =========================
-# Tunables (override via env)
+# Tunables
 # =========================
 BATCH_SIZE        = int(os.getenv("KPI_BATCH_SIZE", "1500"))
 CACHE_TTL_D       = int(os.getenv("KPI_CACHE_TTL_DAYS", "90"))
-MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))     # CI-safe default
+MAX_WORKERS       = int(os.getenv("KPI_MAX_WORKERS", "1"))
 RETRIES           = int(os.getenv("KPI_RETRIES", "3"))
 BASE_BACKOFF      = float(os.getenv("KPI_BACKOFF_SECS", "1.2"))
-
-# Rate limiting knobs (for Azure OpenAI embeddings)
-EMBED_RPM         = int(os.getenv("KPI_EMBED_RPM", "40"))      # requests/min across the process
-THROTTLE_SECS     = float(os.getenv("KPI_THROTTLE_SECS", "0")) # optional fixed delay per persona
+EMBED_RPM         = int(os.getenv("KPI_EMBED_RPM", "40"))
+THROTTLE_SECS     = float(os.getenv("KPI_THROTTLE_SECS", "0"))
 
 # =========================
-# Lightweight rate limiter
+# Rate limiter
 # =========================
 class RateLimiter:
     def __init__(self, max_calls:int, window_secs:float=60.0):
@@ -101,7 +92,6 @@ class RateLimiter:
                 if sleep_for>0: time.sleep(sleep_for)
             self.events.append(time.time())
 
-from collections import deque
 _embed_rl = RateLimiter(EMBED_RPM, 60.0)
 
 def _is_azure_429(err: Exception) -> bool:
@@ -142,84 +132,29 @@ def _is_operation_canceled(err: Exception) -> bool:
 SELECT_CANDIDATES_SQL = """
 WITH src AS (
   SELECT
-    COALESCE(NULLIF(TRIM(account), ''), '')                         AS company_name,
-    COALESCE(NULLIF(TRIM(subsidiary), ''), '')                      AS subsidiary,
-    COALESCE(NULLIF(TRIM(working_group), ''), '')                   AS working_group,
-    COALESCE(NULLIF(TRIM(business_unit), ''), '')                   AS business_unit,
-    COALESCE(NULLIF(TRIM(service_line), ''), '')                    AS service_line,
-    COALESCE(NULLIF(TRIM(client_name), ''), '')                     AS client_name,
-    COALESCE(NULLIF(TRIM(client_designation), ''), '')              AS client_designation,
-    COALESCE(NULLIF(TRIM(reporting_manager_designation), ''), '')   AS reporting_manager_designation,
-    COALESCE(NULLIF(TRIM(email_address), ''), '')                   AS email_address,
-    COALESCE(NULLIF(TRIM(location), ''), '')                        AS location,
-    COALESCE(NULLIF(TRIM(lead_priority), ''), 'Z')                  AS lead_priority,
-
-    -- Normalize last_update_date to timestamptz safely
-    CASE
-      WHEN last_update_date IS NULL THEN NULL
-      WHEN pg_typeof(last_update_date)::text = 'timestamp with time zone'
-        THEN last_update_date::timestamptz
-      WHEN pg_typeof(last_update_date)::text = 'timestamp without time zone'
-        THEN (last_update_date::timestamp)::timestamptz
-      WHEN pg_typeof(last_update_date)::text = 'date'
-        THEN (last_update_date::timestamp)::timestamptz
-      WHEN pg_typeof(last_update_date)::text = 'text'
-           AND last_update_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?)?$'
-        THEN (last_update_date::timestamp)::timestamptz
-      WHEN pg_typeof(last_update_date)::text = 'text'
-           AND last_update_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
-        THEN to_timestamp(last_update_date, 'MM/DD/YYYY')::timestamptz
-      WHEN pg_typeof(last_update_date)::text = 'text'
-           AND last_update_date ~ '^[0-9]{2}-[0-9]{2}-[0-9]{4}$'
-        THEN to_timestamp(last_update_date, 'MM-DD-YYYY')::timestamptz
-      ELSE NULL
-    END AS last_update_at
+    COALESCE(NULLIF(TRIM(account), ''), '') AS company_name,
+    COALESCE(NULLIF(TRIM(client_name), ''), '') AS client_name,
+    COALESCE(NULLIF(TRIM(client_designation), ''), '') AS client_designation,
+    COALESCE(NULLIF(TRIM(working_group), ''), '') AS working_group,
+    COALESCE(NULLIF(TRIM(business_unit), ''), '') AS business_unit,
+    COALESCE(NULLIF(TRIM(service_line), ''), '') AS service_line,
+    COALESCE(NULLIF(TRIM(subsidiary), ''), '') AS subsidiary,
+    COALESCE(NULLIF(TRIM(location), ''), '') AS location,
+    COALESCE(NULLIF(TRIM(email_address), ''), '') AS email_address,
+    COALESCE(NULLIF(TRIM(reporting_manager_designation), ''), '') AS reporting_manager_designation,
+    COALESCE(NULLIF(TRIM(lead_priority), ''), 'Z') AS lead_priority
   FROM scout.centralize_db
   WHERE COALESCE(NULLIF(TRIM(client_name), ''), '') <> ''
     AND COALESCE(NULLIF(TRIM(account), ''), '') <> ''
 )
-SELECT *
-FROM src
-ORDER BY
-  lead_priority ASC,
-  COALESCE(last_update_at, NOW() - INTERVAL '10 years') DESC
+SELECT * FROM src
+ORDER BY lead_priority ASC
 LIMIT :n;
 """
 
 def select_candidates(engine: Engine, n: int) -> List[Dict[str, Any]]:
-    try:
-        with engine.begin() as conn:
-            rows = conn.execute(text(SELECT_CANDIDATES_SQL), {"n": int(n)}).mappings().all()
-            return [dict(r) for r in rows]
-    except Exception:
-        pass
-
-    # Fallback: simpler ordering
-    fallback_sql = """
-      WITH src AS (
-        SELECT
-          COALESCE(NULLIF(TRIM(account), ''), '')                         AS company_name,
-          COALESCE(NULLIF(TRIM(subsidiary), ''), '')                      AS subsidiary,
-          COALESCE(NULLIF(TRIM(working_group), ''), '')                   AS working_group,
-          COALESCE(NULLIF(TRIM(business_unit), ''), '')                   AS business_unit,
-          COALESCE(NULLIF(TRIM(service_line), ''), '')                    AS service_line,
-          COALESCE(NULLIF(TRIM(client_name), ''), '')                     AS client_name,
-          COALESCE(NULLIF(TRIM(client_designation), ''), '')              AS client_designation,
-          COALESCE(NULLIF(TRIM(reporting_manager_designation), ''), '')   AS reporting_manager_designation,
-          COALESCE(NULLIF(TRIM(email_address), ''), '')                   AS email_address,
-          COALESCE(NULLIF(TRIM(location), ''), '')                        AS location,
-          COALESCE(NULLIF(TRIM(lead_priority), ''), 'Z')                  AS lead_priority
-        FROM scout.centralize_db
-        WHERE COALESCE(NULLIF(TRIM(client_name), ''), '') <> ''
-          AND COALESCE(NULLIF(TRIM(account), ''), '') <> ''
-      )
-      SELECT *
-      FROM src
-      ORDER BY lead_priority ASC
-      LIMIT :n;
-    """
-    with engine.begin() as conn2:
-        rows = conn2.execute(text(fallback_sql), {"n": int(n)}).mappings().all()
+    with engine.begin() as conn:
+        rows = conn.execute(text(SELECT_CANDIDATES_SQL), {"n": int(n)}).mappings().all()
         return [dict(r) for r in rows]
 
 # =========================
@@ -251,63 +186,105 @@ def persona_row_for_rag(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 # =========================
-# Filter already cached within TTL
+# Filter already cached
 # =========================
 def filter_not_cached(engine: Engine, candidates: List[Dict[str, Any]], ttl_days: int) -> List[Dict[str, Any]]:
     enriched = []
     for r in candidates:
         company = (r.get("company_name") or "").strip()
-        if not company:
-            continue
+        if not company: continue
         pblob = build_persona_blob(r)
         pkey = _persona_key(company, pblob)
         enriched.append((r, company, pkey))
 
-    by_co: Dict[str, List[str]] = {}
-    for _r, co, pk in enriched:
-        by_co.setdefault(co, []).append(pk)
-
-    cached: Dict[Tuple[str, str], bool] = {}
+    cached = {}
     with engine.begin() as conn:
-        for co, keys in by_co.items():
-            if not keys:
-                continue
-            unique_keys = list(set(keys))
+        for _, co, pk in enriched:
             sql = text("""
-              SELECT persona_key
-              FROM rag.persona_kpi_cache
-              WHERE company_name = :c
-                AND persona_key IN :keys
+              SELECT 1 FROM rag.persona_kpi_cache
+              WHERE company_name=:c AND persona_key=:pk
                 AND created_at >= NOW() - (:ttl * INTERVAL '1 day')
-            """).bindparams(bindparam("keys", expanding=True))
-            rows = conn.execute(sql, {"c": co, "keys": unique_keys, "ttl": int(ttl_days)}).fetchall()
-            hit = {row[0] for row in rows}
-            for k in unique_keys:
-                cached[(co, k)] = (k in hit)
+            """)
+            rows = conn.execute(sql, {"c": co, "pk": pk, "ttl": int(ttl_days)}).fetchall()
+            cached[(co, pk)] = bool(rows)
 
-    out: List[Dict[str, Any]] = []
-    for r, co, pk in enriched:
-        if not cached.get((co, pk), False):
-            r["_persona_key"] = pk
-            out.append(r)
-    return out
+    return [r for r, co, pk in enriched if not cached.get((co, pk), False)]
 
 # =========================
-# Schema ensure with single-run latch
+# Schema ensure
 # =========================
 _SCHEMA_OK = False
 def ensure_schema_autofix(engine: Engine):
-    """Run ensure_rag_schema once per process; leave RAG_AUTO_MIGRATE=1 set."""
     global _SCHEMA_OK
-    if _SCHEMA_OK:
-        return
-    # keep auto-migration enabled for any downstream ensure_rag_schema() calls
+    if _SCHEMA_OK: return
     os.environ["RAG_AUTO_MIGRATE"] = "1"
     ensure_rag_schema(engine)
     _SCHEMA_OK = True
 
 # =========================
-# Worker with 429/timeout handling (no schema ops here)
+# NEW: Backfill via fetch_annual + pgvector
+# =========================
+def _maybe_backfill_company_index(company: str, engine) -> bool:
+    """
+    When run_kpis_for_persona() reports 'no indexed content',
+    use features/insights/fetch_annual.py to fetch & store
+    the annual report, then embed its text into rag.chunks.
+    """
+    try:
+        from features.insights.fetch_annual import fetch_or_load_annual_report
+        from openai import AzureOpenAI
+        import tiktoken
+
+        print(f"🧩 Backfilling missing context for {company}...")
+
+        result = fetch_or_load_annual_report(engine, company)
+        if result.status not in ("present", "ingested"):
+            print(f"⚠️ No annual report found for {company} (status={result.status})")
+            return False
+
+        # Load text from rag.documents
+        with engine.begin() as conn:
+            doc = conn.execute(
+                text("SELECT text FROM rag.documents WHERE id=:id"),
+                {"id": result.document_id},
+            ).scalar()
+        if not doc:
+            print(f"⚠️ No text found for {company}")
+            return False
+
+        enc = tiktoken.get_encoding("cl100k_base")
+        toks = enc.encode(doc)
+        chunks = [enc.decode(toks[i:i+900]) for i in range(0, len(toks), 900)]
+
+        client = AzureOpenAI(
+            api_key=os.getenv("AZURE_API_KEY"),
+            azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+            api_version="2023-05-15",
+        )
+
+        with engine.begin() as conn:
+            for idx, ch in enumerate(chunks):
+                emb = client.embeddings.create(
+                    model="text-embedding-3-small", input=ch
+                ).data[0].embedding
+                conn.execute(
+                    text("""
+                        INSERT INTO rag.chunks (company_name, chunk_id, content, embedding, created_at)
+                        VALUES (:c, :cid, :content, :emb, NOW())
+                        ON CONFLICT DO NOTHING;
+                    """),
+                    {"c": company, "cid": idx, "content": ch, "emb": emb},
+                )
+
+        print(f"✅ Backfilled and embedded {company} ({len(chunks)} chunks).")
+        return True
+
+    except Exception as e:
+        print(f"❌ Backfill failed for {company}: {e}")
+        return False
+
+# =========================
+# Worker
 # =========================
 def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,Optional[str]]:
     company=(row.get("company_name") or "").strip()
@@ -319,15 +296,13 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,O
     persona_rag=persona_row_for_rag(row)
 
     if THROTTLE_SECS>0: time.sleep(THROTTLE_SECS)
-
     backoff=BASE_BACKOFF
+    attempted_backfill=False
+
     for attempt in range(1, RETRIES+1):
         try:
-            _embed_rl.acquire()              # throttle before heavy path
-
-            # IMPORTANT: run_kpis_for_persona has no 'timeout' kwarg
+            _embed_rl.acquire()
             ui_payload=run_kpis_for_persona(company, persona_rag, top_k=8)
-
             upsert_kpis(engine, company=company, persona_key=pk,
                         persona_blob=persona_blob, kpis_json=ui_payload,
                         k_used=int(ui_payload.get("k_used") or 8))
@@ -335,11 +310,9 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,O
 
         except DeadlockDetected as e:
             if attempt>=RETRIES: return company,name,pk,False,f"deadlock: {e}"
-            delay=backoff*(2**(attempt-1))+random.uniform(0,0.3)
-            time.sleep(delay); continue
+            time.sleep(backoff*(2**(attempt-1))+random.uniform(0,0.3)); continue
 
         except Exception as e:
-            # Treat rate limits/cancellations as transient
             if _is_azure_429(e) or _is_operation_canceled(e):
                 wait=_retry_after_seconds_from(e) or max(30.0, backoff)
                 time.sleep(wait+random.uniform(0,0.25))
@@ -350,14 +323,16 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,O
                 continue
 
             if _is_soft_no_context(e):
-                # success-but-skipped to avoid infinite retries on empty orgs
+                if not attempted_backfill and _maybe_backfill_company_index(company, engine):
+                    attempted_backfill=True
+                    time.sleep(3)
+                    continue
                 return company,name,pk,True,"skipped: no context"
 
             tb=traceback.format_exc(limit=6)
             if attempt>=RETRIES:
                 return company,name,pk,False,f"{e.__class__.__name__}: {e} | {tb}"
-            time.sleep(backoff+random.uniform(0,0.25))
-            backoff*=2
+            time.sleep(backoff+random.uniform(0,0.25)); backoff*=2
 
     return company,name,pk,False,"exhausted retries without success"
 
@@ -366,57 +341,45 @@ def process_one(engine: Engine, row: Dict[str, Any]) -> Tuple[str,str,str,bool,O
 # =========================
 def main() -> int:
     eng=get_engine()
-
-    # Force schema ensure/migration once, and keep RAG_AUTO_MIGRATE=1 for this process
     ensure_schema_autofix(eng)
-
     ensure_kpi_cache(eng)
 
     candidates=select_candidates(eng, n=BATCH_SIZE)
     if not candidates:
-        print("No personas in centralize DB."); return 0
+        print("No personas found."); return 0
 
     eligible=filter_not_cached(eng, candidates, ttl_days=CACHE_TTL_D)
     if not eligible:
-        print(f"No eligible personas (all cached within last {CACHE_TTL_D} days)."); return 0
+        print(f"All personas cached within {CACHE_TTL_D} days."); return 0
 
-    eligible=eligible[:BATCH_SIZE]
-    print(f"Selected {len(eligible)} personas (not cached in last {CACHE_TTL_D} days).")
-
+    print(f"Selected {len(eligible)} personas to process.")
     ok=fail=0
+
     if MAX_WORKERS<=1:
         for i,row in enumerate(eligible,1):
             c,n,pk,success,err=process_one(eng,row)
-            if success:
-                ok+=1; msg="" if not err else f" — {err}"
-                print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}{msg}")
-            else:
-                fail+=1
-                print(f"[{i}/{len(eligible)}]  FAIL:: {n} @ {c} — {err}")
+            msg=f" — {err}" if err else ""
+            print(f"[{i}/{len(eligible)}] {'OK' if success else 'FAIL'} :: {n} @ {c}{msg}")
+            ok+=success; fail+=not success
     else:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures={pool.submit(process_one, eng, r): r for r in eligible}
-            i=0
-            for fut in as_completed(futures):
-                i+=1; row=futures[fut]
+            for i,fut in enumerate(as_completed(futures),1):
+                row=futures[fut]
                 try:
                     c,n,pk,success,err=fut.result()
-                    if success:
-                        ok+=1; msg="" if not err else f" — {err}"
-                        print(f"[{i}/{len(eligible)}]  OK  :: {n} @ {c}{msg}")
-                    else:
-                        fail+=1
-                        print(f"[{i}/{len(eligible)}]  FAIL:: {n} @ {c} — {err}")
+                    msg=f" — {err}" if err else ""
+                    print(f"[{i}/{len(eligible)}] {'OK' if success else 'FAIL'} :: {n} @ {c}{msg}")
+                    ok+=success; fail+=not success
                 except Exception as e:
-                    fail+=1
-                    company=(row.get("company_name") or "").strip()
-                    name=(row.get("client_name") or "").strip()
+                    company=(row.get('company_name') or '').strip()
+                    name=(row.get('client_name') or '').strip()
                     tb=traceback.format_exc(limit=6)
-                    print(f"[{i}/{len(eligible)}]  EXC :: {name} @ {company} — {e.__class__.__name__}: {e} | {tb}")
+                    print(f"[{i}/{len(eligible)}] EXC :: {name} @ {company} — {e.__class__.__name__}: {e} | {tb}")
+                    fail+=1
 
     print(f"Done. Success={ok}, Fail={fail}")
     return 0 if fail==0 else 2
 
 if __name__=="__main__":
     sys.exit(main())
-# =========================
