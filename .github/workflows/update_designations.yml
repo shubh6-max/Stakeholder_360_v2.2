@@ -1,33 +1,29 @@
 name: Update Missing Role Classifications
 
 on:
-  workflow_dispatch:        # Manual trigger from GitHub UI
+  workflow_dispatch:          # Manual trigger
   schedule:
-    - cron: "0 2 * * *"     # Every day at 2 AM UTC (7:30 AM IST)
+    - cron: "30 16 * * *"     # 10:00 PM IST daily (16:30 UTC)
 
 jobs:
   classify_and_update:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Set up Python environment
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 3️⃣ Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pandas sqlalchemy psycopg2-binary python-dotenv openai
 
-      # 4️⃣ Run the update script
-      - name: Run role classification and DB update
+      - name: Run Azure OpenAI classification and DB update
         env:
           PG_USER: ${{ secrets.PG_USER }}
           PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
@@ -39,4 +35,4 @@ jobs:
           AZURE_DEPLOYMENT: ${{ secrets.AZURE_DEPLOYMENT }}
           AZURE_API_VERSION: "2024-02-15-preview"
         run: |
-          python update_designations.py
+          python scripts/update_designations.py
