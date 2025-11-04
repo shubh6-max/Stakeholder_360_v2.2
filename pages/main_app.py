@@ -640,7 +640,7 @@ elif st.session_state.get("last_insights_key"):
     except Exception:
         pass
 
-
+st.markdown("---") 
 # ===============================================
 # 🎯 Persona KPI + Impact Insights Section
 # ===============================================
@@ -707,4 +707,4 @@ if st.button("Logout"):
     st.success("You have been logged out.")
     st.switch_page("pages/login.py")
 
-st.write(st.session_state)
+# st.write(st.session_state)

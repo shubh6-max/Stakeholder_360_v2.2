@@ -18,7 +18,8 @@ You are a B2B customer success analyst.
 Analyze the stakeholder's role and generate the following:
 - Business Functions (from the list below)
 - Top 5–7 strategic KPIs for each
-- Likely industry focus
+- Likely industry focus 
+- Use short form names for Industries (e.g., "FinTech", "HealthTech", "Retail", "Manufacturing", "Logistics", "SaaS", CPG etc.)
 
 Respond in this JSON structure:
 {{

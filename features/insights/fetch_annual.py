@@ -207,17 +207,21 @@ def fetch_or_load_annual_report(engine: Engine, company: str) -> AnnualFetchResu
                 note="Loaded from DB (present).",
             )
 
-    # 3) Decide presence if unclear
+    # 3) Decide presence if unclear or previously absent (recheck)
     presence = None
     if src:
         if src.status in ("present", "ingested"):
             presence = True
         elif src.status == "absent":
-            presence = False
-
-    if presence is None:
+            # Recheck if previously absent — maybe Tavily now says True
+            print(f"🔁 Rechecking Tavily presence for {company} (was marked absent earlier)")
+            presence = company_publishes_annual_report(company)
+        else:
+            presence = None
+    else:
         presence = company_publishes_annual_report(company)
 
+    # 4) Handle final presence decision
     if presence is False:
         src = upsert_source_status(
             engine,
@@ -227,6 +231,10 @@ def fetch_or_load_annual_report(engine: Engine, company: str) -> AnnualFetchResu
             note="Tavily indicated no annual report.",
         )
         return AnnualFetchResult(status="absent", source=src, url=None, document_id=None, text_chars=0)
+    elif presence is None:
+        # optimistic fallback
+        presence = True
+
 
     # 4) Get or refresh URL
     url = (src.url if src else None) or jina_find_recent_annual_pdf(company)
