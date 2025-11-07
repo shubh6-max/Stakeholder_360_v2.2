@@ -49,4 +49,5 @@ def retrieve_and_rerank(engine: Engine, persona_info: str, kpis: List[str], top_
             seen.add(t); deduped.append(c)
 
     top3 = rerank_impacts(persona_info, kpis, deduped)
+    print(top3)
     return top3
