@@ -2,16 +2,23 @@
 # s360_rag/pipelines/rag_pipeline.py
 # -------------------------------------------------
 # Persona → KPIs (LLM) → Candidate impacts (pgvector KNN) → Select → Rerank (LLM)
-# Returns: { "persona_info", "persona_kpis", "kpi_data", "top_impacts" }
+# Returns:
+# {
+#   "persona_info", "persona_kpis", "persona_industries",
+#   "kpi_data", "top_impacts"
+# }
 
 from __future__ import annotations
 import os
 import json
 import re
+import hashlib
 from typing import List, Dict, Any
+
 from sqlalchemy import text
 from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
+
 from utils.db import get_engine
 from pipelines.embedding_utils import generate_embeddings_sync
 import streamlit as st
@@ -41,24 +48,27 @@ _llm = AzureChatOpenAI(
 # Prompts
 # -------------------------
 KPI_PROMPT = """
-You are a B2B customer success analyst.
+You are a senior B2B customer success analyst.
 
-Analyze the stakeholder's role and generate the following:
-- Business Functions (from the list below)
+Step 1: Analyze the stakeholder's role and generate possible Business Functions, KPIs, and Industries.
+- Business Functions
 - Top 5–7 strategic KPIs for each
-- Likely industry focus
+- Likely industry focus (use short form for industries, e.g., "Retail", "Manufacturing", "Healthcare", "Finance", "Technology", CPG etc.)
 
-Respond in this JSON structure:
+Step 2: Re-analyze your own output and select only the most relevant Business Function, at least five high-confidence strategic KPI , and one high-confidence Industry.
+
+Respond strictly in this JSON format:
 {{
-  "Business Function": {{
-    "strategic_kpis": ["KPI1", "KPI2", "..."],
-    "Industry": ["Sector1", "Sector2"]
-  }}
+    "Business Function": {{
+        "strategic_kpis": ["KPI1", "KPI2", "..."],
+        "Industry": ["Sector1", "Sector2"]
+    }} 
 }}
 
 Input:
 {persona_info}
 """.strip()
+
 
 IMPACT_SELECT_PROMPT = """
 You are a consulting expert helping sales teams link persona KPIs to relevant business impacts.
@@ -111,6 +121,7 @@ Persona KPIs:
 Candidate Impacts:
 {candidates}
 """.strip()
+
 # -------------------------
 # Helpers
 # -------------------------
@@ -122,11 +133,13 @@ def _norm(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
+def _stable_key(text: str) -> str:
+    """Deterministic key for caching across reruns (hash() is process-random)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 def _pgvector_literal(vec: List[float]) -> str:
     """Convert list to pgvector literal."""
     return "[" + ",".join(f"{x:.8f}" for x in vec) + "]"
-
 
 def _llm_json(llm_text: str, fallback: Any) -> Any:
     txt = llm_text.strip().replace("```json", "").replace("```", "")
@@ -134,7 +147,6 @@ def _llm_json(llm_text: str, fallback: Any) -> Any:
         return json.loads(txt)
     except Exception:
         return fallback
-
 
 def _fetch_candidates_from_db(query_vec: List[float], top_k: int = 30) -> List[Dict[str, Any]]:
     """Retrieve top-K nearest impacts from pgvector store."""
@@ -157,7 +169,6 @@ def _fetch_candidates_from_db(query_vec: List[float], top_k: int = 30) -> List[D
         rows = conn.execute(text(sql), {"k": top_k}).mappings().all()
     return [dict(r) for r in rows]
 
-
 def _build_context_block(candidates: List[Dict[str, Any]], max_items: int = 40) -> str:
     """Readable block for LLM context."""
     lines = []
@@ -173,53 +184,76 @@ def _build_context_block(candidates: List[Dict[str, Any]], max_items: int = 40) 
 # Main pipeline
 # -------------------------
 def run_persona_rag_pipeline(persona_info: str, *, retrieval_k: int = 40) -> Dict[str, Any]:
-    """Full RAG pipeline for persona → KPIs → top impacts."""
+    """Full RAG pipeline for persona → KPIs → top impacts (industry-aware)."""
     if not persona_info or not persona_info.strip():
         raise ValueError("persona_info is empty")
 
-    # ---- 1️⃣ Generate KPIs
+    # ---- 0) Session cache short-circuit
+    cache_key = f"persona_{_stable_key(persona_info)}"
+    if "rag_cache" in st.session_state and cache_key in st.session_state["rag_cache"]:
+        return st.session_state["rag_cache"][cache_key]
+
+    # ---- 1) Generate KPIs JSON
     kpi_resp = _llm.invoke(KPI_PROMPT.format(persona_info=persona_info))
     kpi_data = _llm_json(kpi_resp.content, {})
+    # print("KPI data generated:")
+    # print(kpi_data)
+    # print("----------------------")
 
+    # ---- 2) Extract ALL KPIs + Industries across functions
+    persona_kpis: List[str] = []
+    persona_industries: List[str] = []
     try:
-        bf = kpi_data.get("Business Function", {}) if isinstance(kpi_data, dict) else {}
-        persona_kpis = list(dict.fromkeys([k.strip() for k in bf.get("strategic_kpis", []) if k]))
+        if isinstance(kpi_data, dict):
+            for _, blob in kpi_data.items():
+                if isinstance(blob, dict):
+                    persona_kpis.extend([k for k in blob.get("strategic_kpis", []) if isinstance(k, str)])
+                    persona_industries.extend([i for i in blob.get("Industry", []) if isinstance(i, str)])
     except Exception:
-        persona_kpis = []
+        pass
+
+    # Dedup/clean
+    persona_kpis = list(dict.fromkeys([_ for _ in (k.strip() for k in persona_kpis) if _]))
+    persona_industries = list(dict.fromkeys([_ for _ in (i.strip() for i in persona_industries) if _]))
 
     if not persona_kpis:
         persona_kpis = ["Process Automation", "Operational Efficiency", "Revenue Growth"]
 
-    # ---- 2️⃣ Embed KPIs
-    query = " ; ".join(persona_kpis)
+    # ---- 3) Build embedding query INCLUDING industries
+    # This biases retrieval toward industry-matching impacts
+    query_terms = persona_kpis + persona_industries
+    query = " ; ".join(query_terms)
     vecs = generate_embeddings_sync([query])
     if not vecs or vecs[0] is None:
-        raise RuntimeError("Failed to generate embedding for persona KPIs.")
+        raise RuntimeError("Failed to generate embedding for persona KPIs/industries.")
     qvec = vecs[0]
 
-    # ---- 3️⃣ Retrieve candidates
+    # ---- 4) Retrieve candidates (pgvector)
     candidates = _fetch_candidates_from_db(qvec, top_k=retrieval_k)
     if not candidates:
-        return {
+        payload = {
             "persona_info": persona_info,
             "persona_kpis": persona_kpis,
+            "persona_industries": persona_industries,
             "kpi_data": kpi_data,
-            "top_impacts": []
+            "top_impacts": [],
         }
+        st.session_state.setdefault("rag_cache", {})[cache_key] = payload
+        return payload
 
-    # Build lookup for later enrichment
+    # Build lookup for enrichment
     impact_to_meta = {
         _norm(c["impact"]): {
             "Industry": c.get("industry") or "",
             "BusinessGroup": c.get("business_group") or "",
             "UseCase": c.get("use_case") or "",
-            "FileName": c.get("source_file") or ""
+            "FileName": c.get("source_file") or "",
         }
         for c in candidates
     }
     raw_impacts = [c["impact"] for c in candidates]
 
-    # ---- 4️⃣ LLM select top-5
+    # ---- 5) LLM Stage-1: select top-5 from context
     context_block = _build_context_block(candidates, max_items=retrieval_k)
     imp_sel = _llm.invoke(
         IMPACT_SELECT_PROMPT.format(
@@ -231,7 +265,7 @@ def run_persona_rag_pipeline(persona_info: str, *, retrieval_k: int = 40) -> Dic
     if not isinstance(candidates_llm, list):
         candidates_llm = [candidates_llm] if candidates_llm else []
 
-    # ---- 5️⃣ LLM rerank top-3
+    # ---- 6) LLM Stage-2: rerank to top-3
     rer = _llm.invoke(
         RERANK_PROMPT.format(
             persona_info=persona_info,
@@ -243,7 +277,7 @@ def run_persona_rag_pipeline(persona_info: str, *, retrieval_k: int = 40) -> Dic
     if not isinstance(top_impacts, list):
         top_impacts = candidates_llm[:3]
 
-    # ---- Enrich impacts with FileName + meta
+    # ---- 7) Enrich impacts with meta (Industry/UseCase/BusinessGroup/FileName)
     def _attach_meta(item: Dict[str, Any]) -> Dict[str, Any]:
         txt = item.get("Impact", "") or ""
         meta = impact_to_meta.get(_norm(txt))
@@ -254,7 +288,7 @@ def run_persona_rag_pipeline(persona_info: str, *, retrieval_k: int = 40) -> Dic
                 if ntxt and (ntxt in nraw or nraw in ntxt):
                     meta = impact_to_meta.get(nraw)
                     break
-        meta = meta or {"Industry":"", "BusinessGroup":"", "UseCase":"", "FileName":""}
+        meta = meta or {"Industry": "", "BusinessGroup": "", "UseCase": "", "FileName": ""}
 
         return {
             "Impact": txt,
@@ -266,15 +300,13 @@ def run_persona_rag_pipeline(persona_info: str, *, retrieval_k: int = 40) -> Dic
 
     cleaned = [_attach_meta(it) for it in top_impacts[:3]]
 
-    # ---- Persist in Streamlit cache so refresh doesn't recompute
-    cache_key = f"persona_{hash(persona_info)}"
-    if "rag_cache" not in st.session_state:
-        st.session_state["rag_cache"] = {}
-    st.session_state["rag_cache"][cache_key] = {
+    # ---- 8) Persist in Streamlit session so refresh doesn't recompute
+    payload = {
         "persona_info": persona_info,
         "persona_kpis": persona_kpis,
+        "persona_industries": persona_industries,
         "kpi_data": kpi_data,
         "top_impacts": cleaned,
     }
-
-    return st.session_state["rag_cache"][cache_key]
+    st.session_state.setdefault("rag_cache", {})[cache_key] = payload
+    return payload

@@ -19,7 +19,7 @@ Analyze the stakeholder's role and generate the following:
 - Business Functions (from the list below)
 - Top 5–7 strategic KPIs for each
 - Likely industry focus 
-- Use short form names for Industries (e.g., "FinTech", "HealthTech", "Retail", "Manufacturing", "Logistics", "SaaS", CPG etc.)
+- Use short form names for Industries (e.g. like Consumer Packaged Goods use CPG etc.)
 
 Respond in this JSON structure:
 {{
@@ -39,6 +39,7 @@ def generate_kpis(persona_info: str) -> dict:
     try:
         data = json.loads(out)
         if not isinstance(data, dict): raise ValueError
+        print("Generated KPIs:", data)
         return data
     except Exception:
         # safe fallback

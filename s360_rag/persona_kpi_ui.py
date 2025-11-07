@@ -71,6 +71,7 @@ def render_persona_kpi_block(persona_data: Dict):
 
     persona_name = persona_data.get("client_name", "Unknown Persona")
     persona_info, clean_json = build_persona_prompt(persona_data)
+    # print("persona_info",persona_info)
     if not persona_info:
         st.warning("Persona data is empty or invalid.")
         return

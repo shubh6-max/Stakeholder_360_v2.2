@@ -80,6 +80,7 @@ def rerank_impacts(persona_info: str, persona_kpis: list, candidates: list) -> l
                 })
             if len(out) == 3:
                 break
+        print("Reranked impacts:", out)
         return out
     except Exception:
         # fallback: take first 3 non-empty unique
