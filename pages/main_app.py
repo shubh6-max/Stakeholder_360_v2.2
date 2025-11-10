@@ -26,8 +26,8 @@ from components.aggrid_sections_all import LEFT_SECTIONS, RIGHT_SECTIONS
 from components.kpi_view import render_kpis
 from features.insights.persona_kpi_runtime import render_persona_fn_kpi_block
 import time
-
-
+import re
+from datetime import datetime
 
 # ⬇️ Add with other imports at the top
 from s360_rag.schemas import PersonaInput
@@ -35,7 +35,7 @@ from s360_rag.kpi_builder import build as build_case_kpis
 from s360_rag.matcher import match_strict
 from s360_rag.db import SessionLocal
 
-
+from io import StringIO
 # --- RAG Case Study Matches (Top 3) ---
 from s360_rag.matcher_topn import match_topn
 from components.impact_cards import render_impact_results
@@ -301,6 +301,35 @@ with c6:
     sel_client = st.selectbox("Client Name", options_for("client_name", flt_e), key="flt_client_name")
 flt_f = apply_filters(flt_e, client_name=sel_client)
 
+if len(flt_f)>1:
+    # Assuming flt_f exists
+    flt_f_copy = flt_f.copy()
+
+    # Layout
+    col1, col2, col3 = st.columns([1, 2.5, 1])
+
+    with col1:
+        st.markdown(f"**Matching records:** {len(flt_f_copy)}")
+
+    with col3:
+        # Convert to CSV in memory
+        csv_buffer = StringIO()
+        flt_f_copy.to_csv(csv_buffer, index=False)
+        csv_data = csv_buffer.getvalue()
+
+        # Download button
+        st.download_button(
+            label="Download current view as CSV",
+            data=csv_data,
+            file_name="filtered_records.csv",
+            mime="text/csv",
+        )
+
+    # Show the table preview
+    st.dataframe(flt_f_copy.head())
+else:
+    pass
+
 # ---- Ready gate: require a specific client selection
 is_ready = (sel_account != "All") and (sel_client != "All")
 
@@ -481,21 +510,22 @@ with right:
         """,
         unsafe_allow_html=True,
     )
-        if 'row' in locals() and row is not None:
-            person_name = row.get("client_name", "")
-            render_avatar_only(
-                person_name,
-                height=AVATAR_H,
-                avatar_size=int(AVATAR_H * 0.9),
-            )
-            render_info_only(
-                person_name,
-                height=INFO_H,
-                show_card=True,
-                max_width=520,
-            )
-        else:
-            st.caption("Select a client to view LinkedIn details.")
+        with st.spinner("Loading LinkedIn details..."):
+            if 'row' in locals() and row is not None:
+                person_name = row.get("client_name", "")
+                render_avatar_only(
+                    person_name,
+                    height=AVATAR_H,
+                    avatar_size=int(AVATAR_H * 0.9),
+                )
+                render_info_only(
+                    person_name,
+                    height=INFO_H,
+                    show_card=True,
+                    max_width=520,
+                )
+            else:
+                st.caption("Select a client to view LinkedIn details.")
 
 
 # ------------------------------------------------------------------------------
