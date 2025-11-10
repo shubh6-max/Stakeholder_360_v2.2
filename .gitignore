@@ -90,3 +90,6 @@ __pycache__/
 db/
 *.sql
 *.xlsx
+# --- Allow only the Streamlit config to be committed ---
+!.streamlit/
+!.streamlit/config.toml
