@@ -1,5 +1,6 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
+# ============================================================
+# Streamlit CI/CD: Deploy Streamlit app to Azure Web App
+# ============================================================
 
 name: Build and deploy Streamlit app to Azure Web App - app-stakeholder360
 
@@ -16,26 +17,33 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.13
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      # (Optional) Validate that dependencies install correctly — this doesn't deploy anything.
-      - name: Validate dependencies
+      # Optional: Validate requirements install successfully
+      - name: Validate Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       # Upload source files for deployment
-      - name: Upload artifact for deployment jobs
+      - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: .
+          path: |
+            .
+            !venv/
+            !antenv/
+            !__pycache__/
+            !.venv/
+            !.git/
+            !*.log
 
   deploy:
     runs-on: ubuntu-latest
@@ -53,4 +61,3 @@ jobs:
           app-name: 'app-stakeholder360'
           slot-name: 'Production'
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_ADEA600423E148DE8CCD4E9CD8A862C5 }}
-          
