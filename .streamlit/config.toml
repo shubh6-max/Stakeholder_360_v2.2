@@ -1,34 +1,32 @@
 # ==========================
-# Stakeholder 360 Config
+# Stakeholder 360 – Streamlit Server Config
 # ==========================
 
 [server]
 headless = true
-port = 8502
-enableCORS = false                  # handled by reverse proxy / load balancer
-enableXsrfProtection = false         # ✅ CSRF security ON
+port = 8000                         # 🔹 Azure expects the app to listen on port 8000
+address = "0.0.0.0"
+enableCORS = false                  # reverse proxy handles this
+enableXsrfProtection = false        # disable for Streamlit forms; CSRF handled elsewhere
 maxUploadSize = 200                 # allow large Excel/CSV uploads
-fileWatcherType = "poll"
-
+fileWatcherType = "poll"            # reliable in Azure Linux containers
 
 [theme]
 base = "light"
 primaryColor = "#0072FF"            # MathCo blue
-backgroundColor = "#EBE3D6"         # beige app background
+backgroundColor = "#EBE3D6"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#213547"               # modern slate grey
-font = "sans serif"                 # clean look
+textColor = "#213547"
+font = "sans serif"
 
 [client]
-toolbarMode = "developer"             # valid values: auto | minimal | viewer | developer
+toolbarMode = "minimal"             # 🔹 use "developer" locally if debugging
 showErrorDetails = true
 
 [runner]
 magicEnabled = false
-fastReruns = true                   # smoother UX
+fastReruns = true
 enforceSerializableSessionState = true
 
 [logger]
-level = "INFO"                      # INFO in prod; switch to DEBUG locally
-
-
+level = "INFO"                      # use DEBUG locally
