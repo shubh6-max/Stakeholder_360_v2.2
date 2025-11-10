@@ -63,4 +63,4 @@ jobs:
         with:
           app-name: 'app-stakeholder360'
           slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D98378B7DFD94A2BB838B6796672BEEE }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_624C2DB45AAE4889A9D9327F4955D5E7 }}
