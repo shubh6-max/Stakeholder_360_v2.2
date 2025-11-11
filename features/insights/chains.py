@@ -7,7 +7,9 @@ from typing import Optional, Dict, Any, List, Tuple
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain.output_parsers import PydanticOutputParser
+# from langchain.output_parsers import PydanticOutputParser
+from langchain_core.output_parsers import PydanticOutputParser
+
 from pydantic import BaseModel, Field, validator
 
 
