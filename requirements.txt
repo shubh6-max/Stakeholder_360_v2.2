@@ -37,4 +37,4 @@ nest_asyncio==1.6.0
 openai==2.7.2
 
 # --- Experimental / helper libs ---
-langchain-experimental==0.3.0
+# langchain-experimental==0.3.0
