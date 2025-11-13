@@ -97,10 +97,12 @@ def load_centralize_df() -> pd.DataFrame:
         sql = "SELECT * FROM scout.centralize_db"
         with engine.begin() as conn:
             df = pd.read_sql(sql, conn)
-        logger.info(f"✅ Loaded data successfully. Rows: {len(df)}")
+        # logger.info(f"✅ Loaded data successfully. Rows: {len(df)}")
+        print(f"✅ Loaded data successfully. Rows: {len(df)}")
         return df
     except Exception as e:
-        logger.error(f"❌ Failed to load data: {e}")
+        # logger.error(f"❌ Failed to load data: {e}")
+        print(f"❌ Failed to load data: {e}")
         raise
 
 # ======================================================
@@ -132,13 +134,16 @@ def fetch_single_url(client: TavilyClient, company_name: str, persona_name: str)
             err_msg = str(e)
             if "blocked due to excessive requests" in err_msg or "429" in err_msg:
                 wait_time = base_delay * attempt + random.uniform(0, 1)
-                logger.warning(
-                    f"⚠️ Rate limited (attempt {attempt}) for {persona_name}. "
-                    f"Sleeping {wait_time:.1f}s before retry..."
-                )
+                # logger.warning(
+                #     f"⚠️ Rate limited (attempt {attempt}) for {persona_name}. "
+                #     f"Sleeping {wait_time:.1f}s before retry..."
+                # )
+                print(f"⚠️ Rate limited (attempt {attempt}) for {persona_name}. "
+                      f"Sleeping {wait_time:.1f}s before retry...")
                 sleep(wait_time)
                 continue
-            logger.error(f"❌ Error fetching {persona_name}: {err_msg}")
+            # logger.error(f"❌ Error fetching {persona_name}: {err_msg}")
+            print(f"❌ Error fetching {persona_name}: {err_msg}")
             sleep(1)
             continue
 
@@ -157,12 +162,14 @@ def fetch_linkedin_urls(df: pd.DataFrame, limit: int = 100, max_workers: int = 8
     df = df[df["linkedin_url"].isna() | (df["linkedin_url"] == "NaN")]
 
     if df.empty:
-        logger.warning("⚠️ No records with missing LinkedIn URLs found.")
+        # logger.warning("⚠️ No records with missing LinkedIn URLs found.")
+        print("⚠️ No records with missing LinkedIn URLs found.")
         return pd.DataFrame()
 
     df = df.head(limit)
     client = TavilyClient(TAVILY_API_KEY)
-    logger.info(f"🔍 Fetching {len(df)} personas using {max_workers} threads...")
+    # logger.info(f"🔍 Fetching {len(df)} personas using {max_workers} threads...")
+    print(f"🔍 Fetching {len(df)} personas using {max_workers} threads...")
 
     results = []
     start = time.time()
@@ -180,7 +187,8 @@ def fetch_linkedin_urls(df: pd.DataFrame, limit: int = 100, max_workers: int = 8
             sleep(0.2)  # small global delay to keep API safe
 
     elapsed = time.time() - start
-    logger.info(f"✅ Completed {len(df)} lookups in {elapsed:.2f}s")
+    # logger.info(f"✅ Completed {len(df)} lookups in {elapsed:.2f}s")
+    print(f"✅ Completed {len(df)} lookups in {elapsed:.2f}s") 
     return pd.json_normalize(results)
 
 # ======================================================
@@ -189,12 +197,14 @@ def fetch_linkedin_urls(df: pd.DataFrame, limit: int = 100, max_workers: int = 8
 def update_linkedin_urls(final_df: pd.DataFrame):
     """Update linkedin_url column in scout.centralize_db"""
     if final_df.empty:
-        logger.warning("⚠️ No records to update.")
+        # logger.warning("⚠️ No records to update.")
+        print("⚠️ No records to update.")
         return
 
     engine = get_engine()
     updated_count = 0
-    logger.info("🧩 Starting database update process...")
+    # logger.info("🧩 Starting database update process...")
+    print("🧩 Starting database update process...")
 
     update_sql = text("""
         UPDATE scout.centralize_db
@@ -214,11 +224,14 @@ def update_linkedin_urls(final_df: pd.DataFrame):
                 conn.execute(update_sql, params)
                 updated_count += 1
                 if idx % 50 == 0:
-                    logger.info(f"🟢 Updated {idx} records so far...")
+                    # logger.info(f"🟢 Updated {idx} records so far...")
+                    print(f"🟢 Updated {idx} records so far...")
             except Exception as e:
-                logger.error(f"❌ Failed to update ({row['persona_name']}, {row['company_name']}): {e}")
+                # logger.error(f"❌ Failed to update ({row['persona_name']}, {row['company_name']}): {e}")
+                print(f"❌ Failed to update ({row['persona_name']}, {row['company_name']}): {e}")
 
-    logger.info(f"✅ Database update complete. Total updated: {updated_count} records.")
+    # logger.info(f"✅ Database update complete. Total updated: {updated_count} records.")
+    print(f"✅ Database update complete. Total updated: {updated_count} records.")
 
 # ======================================================
 # ⚡ MAIN
@@ -227,13 +240,14 @@ def main():
     start_time = time.time()
     df = load_centralize_df()
     final_df = fetch_linkedin_urls(df, limit=1000, max_workers=8)
-    logger.info(f"Final results: {final_df.shape}")
+    # logger.info(f"Final results: {final_df.shape}")
+    print(f"Final results: {final_df.shape}")
 
     # 🧱 Update DB
     update_linkedin_urls(final_df)
 
     elapsed = time.time() - start_time
-    logger.info(f"⏱️ Total time: {elapsed:.2f}s")
+    # logger.info(f"⏱️ Total time: {elapsed:.2f}s")
     print(f"⏱️ Total time: {elapsed:.2f}s")
     return final_df
 
