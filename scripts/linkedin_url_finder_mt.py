@@ -45,19 +45,19 @@ os.makedirs("logs", exist_ok=True)
 IS_COLAB = "google.colab" in sys.modules
 IS_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
 
-handlers = [
-    logging.StreamHandler(sys.stdout),
-    logging.FileHandler("logs/linkedin_url_finder.log", mode="a")
-]
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=handlers
-)
-logger = logging.getLogger(__name__)
-for h in logger.handlers:
-    h.flush = sys.stdout.flush
+# handlers = [
+#     logging.StreamHandler(sys.stdout),
+#     logging.FileHandler("logs/linkedin_url_finder.log", mode="a")
+# ]
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(asctime)s | %(levelname)-8s | %(message)s",
+#     datefmt="%Y-%m-%d %H:%M:%S",
+#     handlers=handlers
+# )
+# logger = logging.getLogger(__name__)
+# for h in logger.handlers:
+#     h.flush = sys.stdout.flush
 
 # ======================================================
 # 🧠 DATABASE CONNECTION
