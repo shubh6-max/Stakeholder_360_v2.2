@@ -107,14 +107,17 @@ def fetch_linkedin_urls(df: pd.DataFrame, limit: int = 1000) -> pd.DataFrame:
             try:
                 query = (
                     f'Respond only with LinkedIn profile URL or "No URL" '
-                    f'for the persona {persona_name} from {company_name}.'
+                    f'for the persona {persona_name} only from {company_name} website linkedin.com. re-analyse the answer if url is not like linkedin profile then say "No URL"'
                 )
+
+
                 response = client.search(
                     query=query,
                     include_answer="advanced",
-                    max_results=3,
-                )
-                url = response.get("answer")
+                    search_depth="advanced",
+                    max_results=3
+                    )
+                url = response.get('results')[0].get('url')
                 print(f"[{idx}/{len(df)}] {persona_name} ({company_name}) → {url}")
                 results.append(
                     {
@@ -202,4 +205,4 @@ def main():
 if __name__ == "__main__":
     final_persona_linkedin_url_df = main()
     print("\n✅ Final Output Preview:")
-    print(final_persona_linkedin_url_df.head())
+    # print(final_persona_linkedin_url_df.head())
