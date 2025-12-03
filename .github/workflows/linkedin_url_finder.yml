@@ -3,7 +3,7 @@ name: Stakeholder360 - LinkedIn URL Finder
 on:
   workflow_dispatch:         # manual trigger
   schedule:
-    - cron: "30 19 * * *"      # every day at 2 AM UTC (7:30 AM IST)
+    - cron: "0 2 * * *"      # 2 AM UTC → 7:30 AM IST
 
 jobs:
   run-finder:
@@ -18,10 +18,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install required dependencies only
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install pandas python-dotenv SQLAlchemy psycopg2-binary requests openai
 
       - name: Run LinkedIn URL Finder
         env:
@@ -30,7 +30,14 @@ jobs:
           PGHOST: ${{ secrets.PGHOST }}
           PGPORT: ${{ secrets.PGPORT }}
           PGDATABASE: ${{ secrets.PGDATABASE }}
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+
+          # Azure OpenAI updated keys (correct var names)
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_API_KEY }}
+          AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
+          AZURE_DEPLOYMENT: ${{ secrets.AZURE_DEPLOYMENT }}
+
         run: |
           echo "🚀 Running LinkedIn URL Finder Script..."
           python scripts/linkedin_url_finder_mt.py
