@@ -174,6 +174,8 @@ def fetch_linkedin_urls(df: pd.DataFrame, limit: int = 1000) -> pd.DataFrame:
             # -------------------
             response = requests.get(jina_url, headers=headers, timeout=15)
 
+            time.sleep(2)
+
             if response.status_code == 200:
                 data = response.json().get("data", [])
                 if len(data) > 0:
