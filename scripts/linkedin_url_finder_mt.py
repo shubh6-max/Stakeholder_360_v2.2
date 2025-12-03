@@ -22,19 +22,71 @@ from time import sleep
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
-from tavily import TavilyClient
+from openai import AzureOpenAI
 
 # ======================================================
 # 🔧 CONFIGURATION
 # ======================================================
 load_dotenv()
 
-PG_USER = os.getenv("PGUSER", "mathcoadmin")
-PG_PASSWORD = os.getenv("PGPASSWORD", "Shubham@123")
-PG_HOST = os.getenv("PGHOST", "psql-scout.postgres.database.azure.com")
-PG_PORT = os.getenv("PGPORT", "5432")
-PG_DB = os.getenv("PGDATABASE", "stakeholder360")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
+PG_USER = os.getenv("PGUSER")
+PG_PASSWORD = os.getenv("PGPASSWORD")
+PG_HOST = os.getenv("PGHOST")
+PG_PORT = os.getenv("PGPORT")
+PG_DB = os.getenv("PGDATABASE")
+JINA_API_KEY = os.getenv("JINA_API_KEY")
+
+# === Azure OpenAI Settings ===
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
+AZURE_API_KEY = os.getenv("AZURE_API_KEY")
+AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
+AZURE_API_VERSION = "2024-02-15-preview"
+
+aoai_client = AzureOpenAI(
+    azure_endpoint=AZURE_ENDPOINT,
+    api_key=AZURE_API_KEY,
+    api_version=AZURE_API_VERSION
+)
+
+def verify_linkedin_url_with_aoai(url: str) -> bool:
+    """
+    Uses Azure OpenAI to verify whether a URL is a real LinkedIn profile URL.
+    Returns True only if URL points to an actual person profile.
+    Otherwise returns False.
+    """
+
+    if url is None:
+        return False
+
+    prompt = f"""
+    You are a strict LinkedIn URL validator.Check if the following URL is a REAL LinkedIn PERSON PROFILE:
+    URL: {url}
+
+    example:
+    - https://www.linkedin.com/in/marwa-abouawad-m-sc-0b368b57  → "YES"
+    - https://www.linkedin.com/in/preethi-gudla  → "YES"
+    
+    Rules:
+  - If it is a company page, article, PDF, generic search page → return "NO".
+  - If it is a real person’s LinkedIn profile → return "YES".
+  - Output MUST be only YES or NO.
+    """
+
+    try:
+        response = aoai_client.chat.completions.create(
+            model=AZURE_DEPLOYMENT,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=5,
+            temperature=0
+        )
+
+        answer = response.choices[0].message.content.strip().upper()
+
+        return answer == "YES"
+
+    except Exception as e:
+        print(f"⚠️ AOAI verification failed for {url}: {e}")
+        return False
 
 # ======================================================
 # 🧠 DATABASE CONNECTION
@@ -80,11 +132,12 @@ def load_centralize_df() -> pd.DataFrame:
         print(f"❌ Failed to load data: {e}")
         raise
 
+import requests
+
 # ======================================================
-# 🔍 FETCH LINKEDIN URL (sequential)
+# 🔍 FETCH LINKEDIN URL USING JINA.AI
 # ======================================================
 def fetch_linkedin_urls(df: pd.DataFrame, limit: int = 1000) -> pd.DataFrame:
-    """Fetch LinkedIn URLs sequentially with Tavily API"""
     df = df.copy()
     df = df[df["linkedin_url"].isna() | (df["linkedin_url"] == "NaN")]
 
@@ -93,58 +146,72 @@ def fetch_linkedin_urls(df: pd.DataFrame, limit: int = 1000) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = df.head(limit)
-    client = TavilyClient(TAVILY_API_KEY)
 
     print(f"🔍 Fetching LinkedIn URLs for {len(df)} personas sequentially...")
     results = []
     start_time = time.time()
 
+    
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {JINA_API_KEY}",
+        "X-Respond-With": "no-content"
+    }
+
     for idx, (company_name, persona_name) in enumerate(zip(df["account"], df["client_name"]), start=1):
-        max_retries = 4
-        base_delay = 2
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                query = (
-                    f'Respond only with LinkedIn profile URL or "No URL" '
-                    f'for the persona {persona_name} only from {company_name} website linkedin.com. re-analyse the answer if url is not like linkedin profile then say "No URL"'
-                )
+        # -------------------
+        # 1️⃣ Build Jina query
+        # -------------------
+        query = f"LinkedIn profile URL for the persona {persona_name} only from {company_name} website linkedin.com."
+        jina_url = f"https://s.jina.ai/?q={requests.utils.quote(query)}"
 
+        linkedin_url = "Not found"
 
-                response = client.search(
-                    query=query,
-                    include_answer="advanced",
-                    search_depth="advanced",
-                    max_results=3
-                    )
-                url = response.get('results')[0].get('url')
-                print(f"[{idx}/{len(df)}] {persona_name} ({company_name}) → {url}")
-                results.append(
-                    {
-                        "company_name": company_name,
-                        "persona_name": persona_name,
-                        "linkedin_url": url,
-                    }
-                )
-                break
+        try:
+            # -------------------
+            # 2️⃣ Call Jina Search
+            # -------------------
+            response = requests.get(jina_url, headers=headers, timeout=15)
 
-            except Exception as e:
-                err_msg = str(e)
-                if "blocked due to excessive requests" in err_msg or "429" in err_msg:
-                    wait_time = base_delay * attempt + random.uniform(0, 1)
-                    print(f"⚠️ Rate limited (attempt {attempt}) for {persona_name}. Sleeping {wait_time:.1f}s...")
-                    sleep(wait_time)
-                    continue
-                print(f"❌ Error fetching {persona_name}: {err_msg}")
-                sleep(1)
-                continue
+            if response.status_code == 200:
+                data = response.json().get("data", [])
+                if len(data) > 0:
+                    first_url = data[0].get("url")
 
-        # ✅ Sleep 1s after every request (prevents API block)
-        sleep(1)
+                    # -------------------------------
+                    # 3️⃣ Verify using Azure OpenAI
+                    # -------------------------------
+                    is_valid = verify_linkedin_url_with_aoai(first_url)
+
+                    if is_valid:
+                        linkedin_url = first_url
+                    else:
+                        linkedin_url = "Not found"
+
+            else:
+                print(f"❌ Jina HTTP error {response.status_code} for {persona_name}")
+
+        except Exception as e:
+            print(f"❌ Error fetching Jina result for {persona_name}: {e}")
+
+        print(f"[{idx}/{len(df)}] {persona_name} → {linkedin_url}")
+
+        results.append(
+            {
+                "company_name": company_name,
+                "persona_name": persona_name,
+                "linkedin_url": linkedin_url,
+            }
+        )
+
+        sleep(1)  # safety delay
 
     elapsed = time.time() - start_time
     print(f"✅ Completed {len(results)} lookups in {elapsed:.2f}s")
     return pd.json_normalize(results)
+
+
 
 # ======================================================
 # 🧱 UPDATE DATABASE
@@ -189,7 +256,7 @@ def update_linkedin_urls(final_df: pd.DataFrame):
 def main():
     start_time = time.time()
     df = load_centralize_df()
-    final_df = fetch_linkedin_urls(df, limit=1000)
+    final_df = fetch_linkedin_urls(df, limit=10)
     print(f"Final results: {final_df.shape}")
 
     # 🧱 Update DB
@@ -205,4 +272,4 @@ def main():
 if __name__ == "__main__":
     final_persona_linkedin_url_df = main()
     print("\n✅ Final Output Preview:")
-    # print(final_persona_linkedin_url_df.head())
+    print(final_persona_linkedin_url_df.head())
