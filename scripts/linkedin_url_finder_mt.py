@@ -256,7 +256,7 @@ def update_linkedin_urls(final_df: pd.DataFrame):
 def main():
     start_time = time.time()
     df = load_centralize_df()
-    final_df = fetch_linkedin_urls(df, limit=10)
+    final_df = fetch_linkedin_urls(df, limit=1000)
     print(f"Final results: {final_df.shape}")
 
     # 🧱 Update DB
