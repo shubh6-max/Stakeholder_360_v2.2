@@ -30,13 +30,17 @@ PG_USER = os.getenv("PG_USER") or os.getenv("PGUSER")
 PG_PASSWORD = os.getenv("PG_PASSWORD") or os.getenv("PGPASSWORD")
 PG_HOST = os.getenv("PG_HOST") or os.getenv("PGHOST")
 PG_PORT = os.getenv("PG_PORT") or os.getenv("PGPORT", "5432")
-PG_DB = os.getenv("PG_DB") or os.getenv("PGDATABASE")
+PG_DB = os.getenv("PG_DB")
+
+
 
 
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
 AZURE_API_KEY = os.getenv("AZURE_API_KEY")
 AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-02-15-preview")
+
+
 
 # --- Check for missing vars ---
 missing = [k for k, v in {
@@ -81,12 +85,13 @@ def get_engine():
 # 3️⃣ Load records needing classification
 # ====================================================
 def load_missing_roles():
-    cols = ["email_address", "client_name", "client_designation", "working_group", "business_unit", "seniority_level"]
+    cols = ["client_email_address", "client_name", "client_designation", "business_unit_function", "seniority_level"]
     query = f"""
         SELECT {', '.join(cols)}
-        FROM scout.centralize_db
-        WHERE (business_unit IS NULL OR business_unit='NaN')
-          AND (seniority_level IS NULL OR seniority_level='NaN');
+        FROM scout_v2.master_ldb
+        WHERE (business_unit_function IS NULL OR business_unit_function='NaN')
+          AND (seniority_level IS NULL OR seniority_level='NaN')
+          ;
     """
     with get_engine().begin() as conn:
         df = pd.read_sql(query, conn)
@@ -109,15 +114,13 @@ You are an expert in classifying corporate job titles.
 
 Given the title: "{title}", classify it into the following 3 fields:
 
-1. "Working Group": choose from ["Business", "Business Analytics", "Business IT", "Central Analytics", "IT", "Others"]
 2. "Business Unit": choose from ["Central Analytics", "Finance", "HR", "IT", "Manufacturing", "Marketing", "Operations", "R&D", "Sales", "Strategy", "Supply Chain", "Others"]
 3. "Seniority Level": choose from ["Associate Director", "Director", "Director -", "Director +", "Senior Manager", "VP", "VP +", "Other"]
 
 Return only a *valid JSON object*. No markdown, no explanation.
 Example:
 {{
-  "working_group": "...",
-  "business_unit": "...",
+  "business_unit_function": "...",
   "seniority_level": "..."
 }}
 '''
@@ -145,16 +148,14 @@ Example:
                 # --- Step 4: fallback defaults ---
                 print(f"⚠️  Non-JSON output for '{title}': {raw[:100]}...")
                 return {
-                    "working_group": "Others",
-                    "business_unit": "Others",
+                    "business_unit_function": "Others",
                     "seniority_level": "Other"
                 }
 
     except Exception as e:
         print(f"❌ API error for '{title}': {e}")
         return {
-            "working_group": "Others",
-            "business_unit": "Others",
+            "business_unit_function": "Others",
             "seniority_level": "Other"
         }
 
@@ -170,7 +171,7 @@ def classify_missing(df: pd.DataFrame):
             info.update({
                 "client_name": row["client_name"],
                 "client_designation": row["client_designation"],
-                "email_address": row["email_address"],
+                "client_email_address": row["client_email_address"],
             })
             results.append(info)
             print(f"✅ {row['client_designation']} → {info}")
@@ -197,23 +198,22 @@ def upsert_records(records):
     cur = conn.cursor()
 
     update_sql = """
-        UPDATE scout.centralize_db
+        UPDATE scout_v2.master_ldb
            SET client_designation = %(client_designation)s,
                client_name        = %(client_name)s,
-               working_group      = %(working_group)s,
-               business_unit      = %(business_unit)s,
+               business_unit_function      = %(business_unit_function)s,
                seniority_level    = %(seniority_level)s
-         WHERE email_address = %(email_address)s;
+         WHERE client_email_address = %(client_email_address)s;
     """
     insert_sql = """
-        INSERT INTO scout.centralize_db (
-            email_address, client_designation, client_name,
-            working_group, business_unit, seniority_level
+        INSERT INTO scout_v2.master_ldb (
+            client_email_address, client_designation, client_name,
+             business_unit_function, seniority_level
         )
-        SELECT %(email_address)s, %(client_designation)s, %(client_name)s,
-               %(working_group)s, %(business_unit)s, %(seniority_level)s
+        SELECT %(client_email_address)s, %(client_designation)s, %(client_name)s,
+               %(business_unit_function)s, %(seniority_level)s
          WHERE NOT EXISTS (
-            SELECT 1 FROM scout.centralize_db WHERE email_address = %(email_address)s
+            SELECT 1 FROM scout_v2.master_ldb WHERE client_email_address = %(client_email_address)s
         );
     """
 
