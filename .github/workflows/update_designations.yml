@@ -29,7 +29,7 @@ jobs:
           PGPASSWORD: ${{ secrets.PGPASSWORD }}
           PGHOST: ${{ secrets.PGHOST }}
           PGPORT: ${{ secrets.PGPORT }}
-          PGDATABASE: ${{ secrets.PGDATABASE }}
+          PGDATABASE: ${{ secrets.PG_DB }}
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
           AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
           AZURE_DEPLOYMENT: ${{ secrets.AZURE_DEPLOYMENT }}
