@@ -3,7 +3,10 @@ name: Update Missing Role Classificationss
 on:
   workflow_dispatch:          # Manual trigger
   schedule:
-    - cron: "30 16 * * *"     # 10:00 PM IST daily (16:30 UTC)
+    - cron: "30 15 * * *"   # 9:00 PM IST
+    - cron: "30 16 * * *"   # 10:00 PM IST
+    - cron: "30 17 * * *"   # 11:00 PM IST
+    - cron: "30 18 * * *"   # 12:00 AM IST
 
 jobs:
   classify_and_update:
