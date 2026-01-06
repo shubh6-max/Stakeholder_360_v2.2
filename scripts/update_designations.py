@@ -91,7 +91,7 @@ def load_missing_roles():
         FROM scout_v2.master_ldb
         WHERE (business_unit_function IS NULL OR business_unit_function='NaN')
           AND (seniority_level IS NULL OR seniority_level='NaN')
-          ;
+          LIMIT 1000;
     """
     with get_engine().begin() as conn:
         df = pd.read_sql(query, conn)
