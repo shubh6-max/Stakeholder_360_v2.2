@@ -43,7 +43,7 @@ PG_DB = os.getenv("PG_DB", "stakeholder360_v2")  # change if needed
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 AZURE_API_KEY = os.getenv("AZURE_API_KEY")
 AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT", "gpt-4-vision-preview")
-# AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-02-15-preview")
+AZURE_API_VERSION = os.getenv("AZURE_API_VERSION", "2024-02-15-preview")
 
 
 # Behavior
